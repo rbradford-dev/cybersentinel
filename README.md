@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # CyberSentinel
 
 **Multi-Agent Cybersecurity AI System**
@@ -162,3 +163,6 @@ pytest tests/ -v
 ## Security Note
 
 API keys are never committed to git. Store all secrets in a `.env` file (added to `.gitignore`). Use `.env.example` as a reference for required variables.
+=======
+# cybersentinel
+>>>>>>> 343c100f4d325a6f09de8b8ee1b05d14591d8c62
