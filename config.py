@@ -98,8 +98,17 @@ LOG_ANOMALY_THRESHOLD: float = float(os.getenv("LOG_ANOMALY_THRESHOLD", "2.0"))
 # ---------------------------------------------------------------------------
 # Application
 # ---------------------------------------------------------------------------
-VERSION: str = "0.2.0"
+VERSION: str = "0.3.0"
 APP_NAME: str = "CyberSentinel"
 LOG_FILE: str = os.getenv("LOG_FILE", str(Path(__file__).parent / "cybersentinel.log"))
 LOG_LEVEL: str = os.getenv("LOG_LEVEL", "DEBUG")
 CACHE_DIR: str = str(Path(__file__).parent / ".cache")
+
+# ---------------------------------------------------------------------------
+# Dashboard
+# ---------------------------------------------------------------------------
+DASHBOARD_HOST: str = os.getenv("DASHBOARD_HOST", "0.0.0.0")
+DASHBOARD_PORT: int = int(os.getenv("DASHBOARD_PORT", "8000"))
+DASHBOARD_RELOAD: bool = os.getenv("DASHBOARD_RELOAD", "false").lower() == "true"
+DASHBOARD_TITLE: str = "CyberSentinel"
+DASHBOARD_VERSION: str = "0.3.0"

@@ -1,0 +1,176 @@
+{% extends "base.html" %}
+
+{% block title %}Findings | {{ config.DASHBOARD_TITLE }}{% endblock %}
+
+{% block content %}
+<!-- ================================================================ -->
+<!-- Section Header                                                    -->
+<!-- ================================================================ -->
+<div class="flex items-center justify-between mb-6">
+    <div class="section-header mb-0">
+        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                  d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+        </svg>
+        Findings
+        <span class="ml-2 text-xs font-mono font-semibold bg-cs-border text-cs-muted px-2 py-0.5 rounded-full">
+            {{ findings | length }}
+        </span>
+    </div>
+</div>
+
+<!-- ================================================================ -->
+<!-- Filter Bar                                                        -->
+<!-- ================================================================ -->
+<div class="flex items-center justify-between mb-4 gap-4">
+    <div class="flex items-center gap-3">
+        <select class="filter-select"
+                hx-get="/api/v1/findings"
+                hx-target="#findings-table-body"
+                hx-trigger="change"
+                hx-include="this"
+                name="severity">
+            <option value="">All Severities</option>
+            <option value="critical">Critical</option>
+            <option value="high">High</option>
+            <option value="medium">Medium</option>
+            <option value="low">Low</option>
+            <option value="info">Info</option>
+        </select>
+    </div>
+    <button onclick="exportFindings()"
+            class="flex items-center gap-2 text-sm font-medium text-cs-muted hover:text-cs-text bg-cs-card border border-cs-border rounded px-3 py-1.5 transition-colors">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                  d="M12 10v6m0 0l-3-3m3 3l3-3M3 17v3a2 2 0 002 2h14a2 2 0 002-2v-3"></path>
+        </svg>
+        Export JSON
+    </button>
+</div>
+
+<!-- ================================================================ -->
+<!-- Findings Table                                                    -->
+<!-- ================================================================ -->
+{% if findings %}
+<div class="bg-cs-card border border-cs-border rounded-lg overflow-hidden">
+    <div class="overflow-x-auto">
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>Severity</th>
+                    <th>Type</th>
+                    <th>Title</th>
+                    <th>Agent</th>
+                    <th>CVE ID</th>
+                    <th>Confidence</th>
+                    <th>Status</th>
+                    <th>Time</th>
+                </tr>
+            </thead>
+            <tbody id="findings-table-body">
+                {% for finding in findings %}
+                <tr>
+                    <!-- Severity -->
+                    <td>
+                        {% if finding.severity == 'critical' %}
+                            <span class="badge-critical">Critical</span>
+                        {% elif finding.severity == 'high' %}
+                            <span class="badge-high">High</span>
+                        {% elif finding.severity == 'medium' %}
+                            <span class="badge-medium">Medium</span>
+                        {% elif finding.severity == 'low' %}
+                            <span class="badge-low">Low</span>
+                        {% else %}
+                            <span class="badge-info">Info</span>
+                        {% endif %}
+                    </td>
+
+                    <!-- Type -->
+                    <td class="text-cs-muted text-xs font-mono uppercase">{{ finding.finding_type or '---' }}</td>
+
+                    <!-- Title (truncated) -->
+                    <td class="truncate-cell" title="{{ finding.title }}">{{ finding.title or 'Untitled' }}</td>
+
+                    <!-- Agent -->
+                    <td class="font-mono text-xs text-cs-muted">{{ finding.agent_name or '---' }}</td>
+
+                    <!-- CVE ID -->
+                    <td class="font-mono text-xs">
+                        {% if finding.raw_data and 'CVE-' in (finding.raw_data | string) %}
+                            {% set cve_match = finding.raw_data | string %}
+                            {% set cve_start = cve_match.find('CVE-') %}
+                            {% if cve_start >= 0 %}
+                                {% set cve_end = cve_match.find('"', cve_start) %}
+                                {% if cve_end > cve_start %}
+                                    <span class="text-cs-blue">{{ cve_match[cve_start:cve_end] }}</span>
+                                {% else %}
+                                    <span class="text-cs-muted">&mdash;</span>
+                                {% endif %}
+                            {% else %}
+                                <span class="text-cs-muted">&mdash;</span>
+                            {% endif %}
+                        {% else %}
+                            <span class="text-cs-muted">&mdash;</span>
+                        {% endif %}
+                    </td>
+
+                    <!-- Confidence -->
+                    <td class="font-mono text-xs">
+                        {% if finding.confidence is not none %}
+                            {% if finding.confidence <= 1 %}
+                                {{ (finding.confidence * 100) | int }}%
+                            {% else %}
+                                {{ finding.confidence | int }}%
+                            {% endif %}
+                        {% else %}
+                            <span class="text-cs-muted">&mdash;</span>
+                        {% endif %}
+                    </td>
+
+                    <!-- Status -->
+                    <td>
+                        {% if finding.status == 'open' %}
+                            <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-mono font-semibold bg-yellow-900/30 text-cs-yellow border border-yellow-700/40">
+                                Open
+                            </span>
+                        {% elif finding.status == 'closed' %}
+                            <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-mono font-semibold bg-green-900/30 text-cs-green border border-green-700/40">
+                                Closed
+                            </span>
+                        {% else %}
+                            <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-mono font-semibold bg-cs-border text-cs-muted">
+                                {{ finding.status or 'Unknown' }}
+                            </span>
+                        {% endif %}
+                    </td>
+
+                    <!-- Time -->
+                    <td class="text-xs text-cs-muted whitespace-nowrap">
+                        <span data-time="{{ finding.created_at }}">{{ finding.created_at or '---' }}</span>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+{% else %}
+<!-- ================================================================ -->
+<!-- Empty State                                                       -->
+<!-- ================================================================ -->
+<div class="empty-state bg-cs-card border border-cs-border rounded-lg">
+    <div class="empty-icon">
+        <svg class="w-12 h-12 mx-auto text-cs-muted opacity-40" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
+                  d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+        </svg>
+    </div>
+    <p class="text-sm text-cs-muted mt-2">No findings recorded yet. Run a query to get started.</p>
+    <a href="/run"
+       class="inline-block mt-4 text-sm font-medium text-cs-green hover:text-cs-green/80 transition-colors">
+        &#9654; Run Query
+    </a>
+</div>
+{% endif %}
+{% endblock %}

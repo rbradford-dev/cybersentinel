@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}{{ config.DASHBOARD_TITLE }}{% endblock %}</title>
+
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        'cs-bg': '#0f1117',
+                        'cs-card': '#1a1d2e',
+                        'cs-card-hover': '#22263a',
+                        'cs-green': '#00ff88',
+                        'cs-red': '#ff4444',
+                        'cs-yellow': '#ffaa00',
+                        'cs-blue': '#4488ff',
+                        'cs-orange': '#ff8844',
+                        'cs-text': '#e2e8f0',
+                        'cs-muted': '#64748b',
+                        'cs-border': '#2d3748',
+                    },
+                    fontFamily: {
+                        mono: ['JetBrains Mono', 'Fira Code', 'monospace'],
+                        sans: ['Inter', 'system-ui', 'sans-serif'],
+                    },
+                }
+            }
+        }
+    </script>
+
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+
+    <!-- HTMX -->
+    <script src="https://unpkg.com/htmx.org@1.9.12"></script>
+    <script src="https://unpkg.com/htmx.org@1.9.12/dist/ext/sse.js"></script>
+
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+
+    <!-- Custom CSS -->
+    <link rel="stylesheet" href="/static/css/dashboard.css">
+
+    {% block head_extra %}{% endblock %}
+</head>
+<body class="bg-cs-bg text-cs-text font-sans min-h-screen flex flex-col">
+
+    <!-- ================================================================ -->
+    <!-- HEADER                                                            -->
+    <!-- ================================================================ -->
+    <header class="bg-cs-card border-b border-cs-border px-4 py-3 flex items-center justify-between z-50 sticky top-0">
+        <div class="flex items-center gap-4">
+            <!-- Logo -->
+            <a href="/" class="flex items-center gap-2 no-underline">
+                <span class="text-cs-red font-mono font-bold text-xl tracking-tight">CYBER</span>
+                <span class="text-cs-green font-mono font-bold text-xl tracking-tight">SENTINEL</span>
+            </a>
+            <!-- Version badge -->
+            <span class="text-xs font-mono bg-cs-border text-cs-muted px-2 py-0.5 rounded">v{{ config.VERSION }}</span>
+            <!-- Mode badge -->
+            {% if config.USE_MOCK_LLM %}
+            <span class="badge-mock text-xs font-mono font-semibold bg-yellow-900/40 text-cs-yellow border border-yellow-700/50 px-2 py-0.5 rounded">
+                &#9889; MOCK MODE
+            </span>
+            {% else %}
+            <span class="badge-live text-xs font-mono font-semibold bg-green-900/40 text-cs-green border border-green-700/50 px-2 py-0.5 rounded">
+                &#x1F7E2; LIVE
+            </span>
+            {% endif %}
+        </div>
+
+        <div class="flex items-center gap-4">
+            <!-- Agent status dots -->
+            <div class="hidden md:flex items-center gap-2 text-xs text-cs-muted">
+                <span class="status-dot-active"></span>
+                <span>4 agents</span>
+            </div>
+            <!-- Run query button -->
+            <a href="/run" class="bg-cs-green/10 hover:bg-cs-green/20 text-cs-green border border-cs-green/30 text-sm font-medium px-4 py-1.5 rounded transition-colors">
+                &#9654; Run Query
+            </a>
+        </div>
+    </header>
+
+    <!-- ================================================================ -->
+    <!-- MAIN LAYOUT: Sidebar + Content                                    -->
+    <!-- ================================================================ -->
+    <div class="flex flex-1 overflow-hidden">
+
+        <!-- SIDEBAR -->
+        <nav class="sidebar w-56 bg-cs-card border-r border-cs-border flex-shrink-0 flex flex-col overflow-y-auto hidden md:flex">
+            <!-- Navigation -->
+            <div class="p-4 space-y-1">
+                <p class="text-xs font-semibold text-cs-muted uppercase tracking-wider mb-3">Navigation</p>
+                <a href="/" class="sidebar-link {{ 'active' if active_page == 'dashboard' else '' }}">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z"></path></svg>
+                    Dashboard
+                </a>
+                <a href="/findings" class="sidebar-link {{ 'active' if active_page == 'findings' else '' }}">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                    Findings
+                </a>
+                <a href="/iocs" class="sidebar-link {{ 'active' if active_page == 'iocs' else '' }}">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9"></path></svg>
+                    IOCs
+                </a>
+                <a href="/cves" class="sidebar-link {{ 'active' if active_page == 'cves' else '' }}">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"></path></svg>
+                    CVEs
+                </a>
+                <a href="/run" class="sidebar-link {{ 'active' if active_page == 'run' else '' }}">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                    Run Query
+                </a>
+                <a href="/agents" class="sidebar-link {{ 'active' if active_page == 'agents' else '' }}">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"></path></svg>
+                    Agents
+                </a>
+            </div>
+
+            <!-- Severity quick counts -->
+            <div class="p-4 mt-auto border-t border-cs-border">
+                <p class="text-xs font-semibold text-cs-muted uppercase tracking-wider mb-3">Severity</p>
+                <div id="sidebar-severity" class="space-y-1.5 text-xs font-mono"
+                     hx-get="/api/v1/findings/stats" hx-trigger="load, every 30s" hx-swap="innerHTML"
+                     hx-target="#sidebar-severity-inner">
+                    <div id="sidebar-severity-inner">
+                        <div class="flex justify-between"><span class="text-cs-red">CRITICAL</span><span>--</span></div>
+                        <div class="flex justify-between"><span class="text-cs-orange">HIGH</span><span>--</span></div>
+                        <div class="flex justify-between"><span class="text-cs-yellow">MEDIUM</span><span>--</span></div>
+                        <div class="flex justify-between"><span class="text-cs-blue">LOW</span><span>--</span></div>
+                    </div>
+                </div>
+            </div>
+        </nav>
+
+        <!-- MAIN CONTENT -->
+        <main class="flex-1 overflow-y-auto p-6">
+            <!-- HTMX loading indicator -->
+            <div class="htmx-indicator fixed top-16 right-4 z-50">
+                <div class="flex items-center gap-2 bg-cs-card border border-cs-border rounded px-3 py-2 text-sm text-cs-muted shadow-lg">
+                    <svg class="animate-spin h-4 w-4 text-cs-green" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+                    </svg>
+                    Loading...
+                </div>
+            </div>
+
+            {% block content %}{% endblock %}
+        </main>
+    </div>
+
+    <!-- ================================================================ -->
+    <!-- FOOTER: Live agent log stream                                     -->
+    <!-- ================================================================ -->
+    <footer class="bg-cs-card border-t border-cs-border h-28 overflow-hidden flex-shrink-0">
+        <div class="flex items-center justify-between px-4 py-1 border-b border-cs-border/50">
+            <span class="text-xs font-mono text-cs-muted uppercase tracking-wider">Agent Activity</span>
+            <span class="text-xs text-cs-muted" id="footer-status">Watching...</span>
+        </div>
+        <div id="agent-log-stream" class="terminal-panel h-full p-2 overflow-y-auto font-mono text-xs leading-relaxed"
+             hx-ext="sse" sse-connect="/stream/findings-feed">
+            <div sse-swap="stats_update" hx-swap="beforeend" hx-target="#agent-log-stream"></div>
+            <p class="text-cs-muted">[SYSTEM] CyberSentinel dashboard online — v{{ config.VERSION }}</p>
+        </div>
+    </footer>
+
+    <!-- Custom JS -->
+    <script src="/static/js/dashboard.js"></script>
+    {% block scripts %}{% endblock %}
+</body>
+</html>

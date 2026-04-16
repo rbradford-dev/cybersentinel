@@ -75,8 +75,14 @@ def build_parser() -> argparse.ArgumentParser:
     a.add_argument("--ip", type=str, default=None, help="IP address to include in assessment")
     a.add_argument("--cve", type=str, default=None, help="CVE ID to include in assessment")
 
-    # interactive — Phase 3 placeholder
-    sub.add_parser("interactive", help="Interactive session (Phase 3)")
+    # serve — web dashboard
+    sv = sub.add_parser("serve", help="Start the web dashboard (FastAPI)")
+    sv.add_argument("--port", type=int, default=config.DASHBOARD_PORT, help=f"Port (default: {config.DASHBOARD_PORT})")
+    sv.add_argument("--host", type=str, default=config.DASHBOARD_HOST, help=f"Host (default: {config.DASHBOARD_HOST})")
+    sv.add_argument("--reload", action="store_true", default=False, help="Enable auto-reload for development")
+
+    # interactive — Phase 4 placeholder
+    sub.add_parser("interactive", help="Interactive session (Phase 4)")
 
     return parser
 
@@ -347,9 +353,18 @@ def main() -> None:
         exit_code = asyncio.run(cmd_assess(args.ip, args.cve))
     elif args.command == "test-exa":
         exit_code = asyncio.run(cmd_test_exa(args.query))
+    elif args.command == "serve":
+        import uvicorn
+        from output.dashboard.app import create_app
+
+        app = create_app()
+        from rich import print as rprint
+        rprint(f"[bold green]Starting CyberSentinel Dashboard[/bold green] on http://{args.host}:{args.port}")
+        uvicorn.run(app, host=args.host, port=args.port, reload=args.reload)
+        exit_code = 0
     elif args.command == "interactive":
         from rich import print as rprint
-        rprint("[yellow]Interactive mode is planned for Phase 3.[/yellow]")
+        rprint("[yellow]Interactive mode is planned for Phase 4.[/yellow]")
         exit_code = 0
     else:
         parser.print_help()

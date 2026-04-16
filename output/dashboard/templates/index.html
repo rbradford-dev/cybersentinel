@@ -1,0 +1,298 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard | {{ config.DASHBOARD_TITLE }}{% endblock %}
+
+{% block content %}
+<!-- Page Title -->
+<div class="mb-6">
+    <h1 class="section-header text-lg">
+        <svg class="w-5 h-5 text-cs-green" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z"></path>
+        </svg>
+        Dashboard
+    </h1>
+</div>
+
+<!-- ================================================================ -->
+<!-- STAT CARDS                                                        -->
+<!-- ================================================================ -->
+<div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+    <!-- Findings -->
+    <div class="stat-card stat-card-green">
+        <div class="stat-value text-cs-green">{{ stats.findings_count | default(0) }}</div>
+        <div class="stat-label">Findings</div>
+        {% if stats.kev_count %}
+        <div class="mt-2">
+            <span class="kev-badge">
+                <svg class="w-3 h-3" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd"></path></svg>
+                {{ stats.kev_count }} KEV
+            </span>
+        </div>
+        {% endif %}
+    </div>
+
+    <!-- IOCs -->
+    <div class="stat-card stat-card-blue">
+        <div class="stat-value text-cs-blue">{{ stats.iocs_count | default(0) }}</div>
+        <div class="stat-label">IOCs</div>
+        {% if stats.active_iocs %}
+        <div class="mt-2 text-xs text-cs-muted font-mono">{{ stats.active_iocs }} active</div>
+        {% endif %}
+    </div>
+
+    <!-- CVEs -->
+    <div class="stat-card stat-card-yellow">
+        <div class="stat-value text-cs-yellow">{{ stats.cve_findings_count | default(0) }}</div>
+        <div class="stat-label">CVEs</div>
+    </div>
+
+    <!-- Sessions -->
+    <div class="stat-card stat-card-red">
+        <div class="stat-value text-cs-red">{{ stats.agent_sessions_count | default(0) }}</div>
+        <div class="stat-label">Sessions</div>
+    </div>
+</div>
+
+<!-- ================================================================ -->
+<!-- TWO-COLUMN LAYOUT: Chart + Table  |  Agent Activity               -->
+<!-- ================================================================ -->
+<div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+
+    <!-- LEFT COLUMN (2/3 width) -->
+    <div class="lg:col-span-2 space-y-6">
+
+        <!-- Severity Distribution Chart -->
+        <div class="bg-cs-card border border-cs-border rounded-lg p-5">
+            <h2 class="section-header">
+                <svg class="w-4 h-4 text-cs-yellow" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 3.055A9.001 9.001 0 1020.945 13H11V3.055z"></path>
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.488 9H15V3.512A9.025 9.025 0 0120.488 9z"></path>
+                </svg>
+                Severity Distribution
+            </h2>
+            <div class="h-64">
+                <canvas id="severity-chart"></canvas>
+            </div>
+        </div>
+
+        <!-- Recent Findings Table -->
+        <div class="bg-cs-card border border-cs-border rounded-lg overflow-hidden">
+            <div class="px-5 pt-5 pb-3">
+                <h2 class="section-header">
+                    <svg class="w-4 h-4 text-cs-red" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                    </svg>
+                    Recent Findings
+                </h2>
+            </div>
+
+            {% if recent_findings %}
+            <div class="overflow-x-auto">
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th class="w-24">Severity</th>
+                            <th>Title</th>
+                            <th class="w-32">Agent</th>
+                            <th class="w-24 text-right">Time</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for finding in recent_findings[:10] %}
+                        <tr>
+                            <td>
+                                {% if finding.severity == 'critical' %}
+                                <span class="badge-critical">critical</span>
+                                {% elif finding.severity == 'high' %}
+                                <span class="badge-high">high</span>
+                                {% elif finding.severity == 'medium' %}
+                                <span class="badge-medium">medium</span>
+                                {% elif finding.severity == 'low' %}
+                                <span class="badge-low">low</span>
+                                {% else %}
+                                <span class="badge-info">info</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                <a href="/findings/{{ finding.finding_id }}" class="text-cs-text hover:text-cs-green transition-colors truncate-cell block" title="{{ finding.title }}">
+                                    {{ finding.title | truncate(60) }}
+                                </a>
+                            </td>
+                            <td class="text-cs-muted font-mono text-xs">{{ finding.agent_name }}</td>
+                            <td class="text-right">
+                                <span class="text-cs-muted text-xs" data-time="{{ finding.created_at }}">--</span>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            <div class="px-5 py-3 border-t border-cs-border/50">
+                <a href="/findings" class="text-xs text-cs-green hover:text-cs-green/80 font-medium transition-colors">
+                    View all findings &rarr;
+                </a>
+            </div>
+            {% else %}
+            <div class="empty-state">
+                <div class="empty-icon">
+                    <svg class="w-12 h-12 mx-auto text-cs-muted opacity-40" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"></path>
+                    </svg>
+                </div>
+                <p class="text-sm font-medium text-cs-muted mb-1">No findings yet</p>
+                <p class="text-xs text-cs-muted/70">Run a security query to generate findings</p>
+                <a href="/run" class="inline-block mt-4 text-xs bg-cs-green/10 hover:bg-cs-green/20 text-cs-green border border-cs-green/30 px-4 py-1.5 rounded transition-colors">
+                    Run Query
+                </a>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- RIGHT COLUMN (1/3 width) -->
+    <div class="space-y-6">
+
+        <!-- Agent Activity Feed -->
+        <div class="bg-cs-card border border-cs-border rounded-lg p-5">
+            <h2 class="section-header">
+                <svg class="w-4 h-4 text-cs-blue" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"></path>
+                </svg>
+                Agent Activity
+            </h2>
+
+            {% if sessions %}
+            <div class="space-y-3">
+                {% for session in sessions[:5] %}
+                <div class="flex items-start gap-3 p-3 rounded-md bg-cs-bg/50 border border-cs-border/50 hover:border-cs-border transition-colors">
+                    <div class="flex-shrink-0 mt-0.5">
+                        {% if session.status == 'completed' %}
+                        <span class="text-cs-green text-sm" title="Completed">&#10003;</span>
+                        {% elif session.status == 'running' %}
+                        <span class="text-cs-yellow text-sm" title="Running">&#9888;</span>
+                        {% else %}
+                        <span class="text-cs-red text-sm" title="Failed">&#10007;</span>
+                        {% endif %}
+                    </div>
+                    <div class="flex-1 min-w-0">
+                        <div class="flex items-center justify-between gap-2">
+                            <span class="text-sm font-medium text-cs-text truncate">{{ session.agent_name }}</span>
+                            <span class="text-xs text-cs-muted whitespace-nowrap" data-time="{{ session.completed_at or session.started_at }}">--</span>
+                        </div>
+                        <div class="flex items-center gap-3 mt-1">
+                            <span class="text-xs font-mono text-cs-muted">
+                                {{ session.findings_count }} finding{{ 's' if session.findings_count != 1 else '' }}
+                            </span>
+                            {% if session.execution_time_ms %}
+                            <span class="text-xs font-mono text-cs-muted">
+                                {{ session.execution_time_ms }}ms
+                            </span>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+            <div class="mt-4 pt-3 border-t border-cs-border/50">
+                <a href="/agents" class="text-xs text-cs-blue hover:text-cs-blue/80 font-medium transition-colors">
+                    View all sessions &rarr;
+                </a>
+            </div>
+            {% else %}
+            <div class="text-center py-8">
+                <div class="mb-2">
+                    <svg class="w-10 h-10 mx-auto text-cs-muted opacity-40" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"></path>
+                    </svg>
+                </div>
+                <p class="text-sm text-cs-muted">No agent sessions yet</p>
+            </div>
+            {% endif %}
+        </div>
+
+        <!-- Severity Breakdown (compact) -->
+        <div class="bg-cs-card border border-cs-border rounded-lg p-5">
+            <h2 class="section-header">
+                <svg class="w-4 h-4 text-cs-orange" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path>
+                </svg>
+                Breakdown
+            </h2>
+            <div class="space-y-3">
+                <!-- Critical -->
+                <div>
+                    <div class="flex items-center justify-between mb-1">
+                        <span class="text-xs font-mono text-cs-red">CRITICAL</span>
+                        <span class="text-xs font-mono text-cs-text">{{ severity_counts.critical | default(0) }}</span>
+                    </div>
+                    <div class="w-full h-1.5 bg-cs-bg rounded-full overflow-hidden">
+                        {% set total = (severity_counts.critical | default(0)) + (severity_counts.high | default(0)) + (severity_counts.medium | default(0)) + (severity_counts.low | default(0)) + (severity_counts.info | default(0)) %}
+                        <div class="h-full bg-cs-red rounded-full transition-all duration-500" style="width: {{ ((severity_counts.critical | default(0)) / total * 100) if total > 0 else 0 }}%"></div>
+                    </div>
+                </div>
+                <!-- High -->
+                <div>
+                    <div class="flex items-center justify-between mb-1">
+                        <span class="text-xs font-mono text-cs-orange">HIGH</span>
+                        <span class="text-xs font-mono text-cs-text">{{ severity_counts.high | default(0) }}</span>
+                    </div>
+                    <div class="w-full h-1.5 bg-cs-bg rounded-full overflow-hidden">
+                        <div class="h-full bg-cs-orange rounded-full transition-all duration-500" style="width: {{ ((severity_counts.high | default(0)) / total * 100) if total > 0 else 0 }}%"></div>
+                    </div>
+                </div>
+                <!-- Medium -->
+                <div>
+                    <div class="flex items-center justify-between mb-1">
+                        <span class="text-xs font-mono text-cs-yellow">MEDIUM</span>
+                        <span class="text-xs font-mono text-cs-text">{{ severity_counts.medium | default(0) }}</span>
+                    </div>
+                    <div class="w-full h-1.5 bg-cs-bg rounded-full overflow-hidden">
+                        <div class="h-full bg-cs-yellow rounded-full transition-all duration-500" style="width: {{ ((severity_counts.medium | default(0)) / total * 100) if total > 0 else 0 }}%"></div>
+                    </div>
+                </div>
+                <!-- Low -->
+                <div>
+                    <div class="flex items-center justify-between mb-1">
+                        <span class="text-xs font-mono text-cs-blue">LOW</span>
+                        <span class="text-xs font-mono text-cs-text">{{ severity_counts.low | default(0) }}</span>
+                    </div>
+                    <div class="w-full h-1.5 bg-cs-bg rounded-full overflow-hidden">
+                        <div class="h-full bg-cs-blue rounded-full transition-all duration-500" style="width: {{ ((severity_counts.low | default(0)) / total * 100) if total > 0 else 0 }}%"></div>
+                    </div>
+                </div>
+                <!-- Info -->
+                <div>
+                    <div class="flex items-center justify-between mb-1">
+                        <span class="text-xs font-mono text-cs-muted">INFO</span>
+                        <span class="text-xs font-mono text-cs-text">{{ severity_counts.info | default(0) }}</span>
+                    </div>
+                    <div class="w-full h-1.5 bg-cs-bg rounded-full overflow-hidden">
+                        <div class="h-full bg-cs-muted rounded-full transition-all duration-500" style="width: {{ ((severity_counts.info | default(0)) / total * 100) if total > 0 else 0 }}%"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+    var severityData = {
+        critical: {{ severity_counts.critical | default(0) }},
+        high: {{ severity_counts.high | default(0) }},
+        medium: {{ severity_counts.medium | default(0) }},
+        low: {{ severity_counts.low | default(0) }},
+        info: {{ severity_counts.info | default(0) }}
+    };
+
+    document.addEventListener('DOMContentLoaded', function () {
+        var canvas = document.getElementById('severity-chart');
+        if (canvas) {
+            severityChart = initSeverityChart('severity-chart', severityData);
+        }
+    });
+})();
+</script>
+{% endblock %}

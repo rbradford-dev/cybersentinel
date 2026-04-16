@@ -6,7 +6,11 @@
       "Bash(set PYTHONIOENCODING=utf-8)",
       "Bash(python -m pytest tests/ -v --tb=short)",
       "Bash(python -c ':*)",
-      "Bash(python -m pytest tests/test_log_analysis_agent.py -v)"
+      "Bash(python -m pytest tests/test_log_analysis_agent.py -v)",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('output/dashboard/routes/stream.py'\\).read\\(\\)\\); print\\('Syntax OK'\\)\")",
+      "Bash(python -c \"import py_compile; py_compile.compile\\('output/dashboard/routes/pages.py', doraise=True\\); print\\('Syntax OK'\\)\")",
+      "Bash(python -m pytest tests/test_dashboard_pages.py tests/test_dashboard_api.py -v --tb=short)",
+      "Bash(timeout 8 python -c ':*)"
     ]
   }
 }

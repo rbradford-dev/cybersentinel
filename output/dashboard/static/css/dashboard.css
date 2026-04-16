@@ -1,0 +1,443 @@
+/* ================================================================
+   CyberSentinel Dashboard — Custom CSS
+   Built on top of Tailwind CSS (loaded via CDN)
+   ================================================================ */
+
+:root {
+    --bg-primary: #0f1117;
+    --bg-card: #1a1d2e;
+    --bg-card-hover: #22263a;
+    --accent-green: #00ff88;
+    --accent-red: #ff4444;
+    --accent-yellow: #ffaa00;
+    --accent-blue: #4488ff;
+    --accent-orange: #ff8844;
+    --text-primary: #e2e8f0;
+    --text-muted: #64748b;
+    --border: #2d3748;
+}
+
+/* ---- Global ---- */
+body {
+    background-color: var(--bg-primary);
+    color: var(--text-primary);
+}
+
+::selection {
+    background-color: rgba(0, 255, 136, 0.2);
+    color: #fff;
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: var(--bg-primary); }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+
+/* ---- Severity Badges ---- */
+.badge-critical {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px 10px;
+    border-radius: 9999px;
+    font-size: 0.7rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    font-family: 'JetBrains Mono', monospace;
+    background-color: rgba(255, 68, 68, 0.2);
+    color: var(--accent-red);
+    border: 1px solid rgba(255, 68, 68, 0.4);
+    animation: pulse-critical 2s ease-in-out infinite;
+}
+
+.badge-high {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px 10px;
+    border-radius: 9999px;
+    font-size: 0.7rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    font-family: 'JetBrains Mono', monospace;
+    background-color: rgba(255, 136, 68, 0.15);
+    color: var(--accent-orange);
+    border: 1px solid rgba(255, 136, 68, 0.3);
+}
+
+.badge-medium {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px 10px;
+    border-radius: 9999px;
+    font-size: 0.7rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    font-family: 'JetBrains Mono', monospace;
+    background-color: rgba(255, 170, 0, 0.12);
+    color: var(--accent-yellow);
+    border: 1px solid rgba(255, 170, 0, 0.3);
+}
+
+.badge-low {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px 10px;
+    border-radius: 9999px;
+    font-size: 0.7rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    font-family: 'JetBrains Mono', monospace;
+    background-color: rgba(68, 136, 255, 0.12);
+    color: var(--accent-blue);
+    border: 1px solid rgba(68, 136, 255, 0.3);
+}
+
+.badge-info {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px 10px;
+    border-radius: 9999px;
+    font-size: 0.7rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    font-family: 'JetBrains Mono', monospace;
+    background-color: rgba(100, 116, 139, 0.15);
+    color: var(--text-muted);
+    border: 1px solid rgba(100, 116, 139, 0.3);
+}
+
+/* Mock / Live badges */
+.badge-mock {
+    animation: pulse-mock 3s ease-in-out infinite;
+}
+
+.badge-live {
+    animation: pulse-live 3s ease-in-out infinite;
+}
+
+/* ---- Stat Cards ---- */
+.stat-card {
+    background-color: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 0.5rem;
+    padding: 1.25rem;
+    transition: all 0.2s ease;
+    position: relative;
+    overflow: hidden;
+}
+
+.stat-card::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 2px;
+    opacity: 0;
+    transition: opacity 0.2s ease;
+}
+
+.stat-card:hover {
+    background-color: var(--bg-card-hover);
+    border-color: rgba(100, 116, 139, 0.3);
+    transform: translateY(-1px);
+}
+
+.stat-card:hover::before {
+    opacity: 1;
+}
+
+.stat-card-green::before { background: var(--accent-green); }
+.stat-card-red::before { background: var(--accent-red); }
+.stat-card-blue::before { background: var(--accent-blue); }
+.stat-card-yellow::before { background: var(--accent-yellow); }
+
+.stat-card .stat-value {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 2rem;
+    font-weight: 700;
+    line-height: 1;
+}
+
+.stat-card .stat-label {
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--text-muted);
+    margin-top: 0.25rem;
+}
+
+/* ---- Data Tables ---- */
+.data-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.8125rem;
+}
+
+.data-table thead th {
+    background-color: rgba(26, 29, 46, 0.8);
+    color: var(--text-muted);
+    font-weight: 600;
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    padding: 0.625rem 0.75rem;
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+    position: sticky;
+    top: 0;
+    z-index: 1;
+}
+
+.data-table tbody tr {
+    border-bottom: 1px solid rgba(45, 55, 72, 0.5);
+    transition: background-color 0.15s ease;
+}
+
+.data-table tbody tr:hover {
+    background-color: var(--bg-card-hover);
+}
+
+.data-table tbody td {
+    padding: 0.625rem 0.75rem;
+    vertical-align: middle;
+}
+
+/* ---- Sidebar ---- */
+.sidebar-link {
+    display: flex;
+    align-items: center;
+    gap: 0.625rem;
+    padding: 0.5rem 0.75rem;
+    border-radius: 0.375rem;
+    font-size: 0.8125rem;
+    font-weight: 500;
+    color: var(--text-muted);
+    text-decoration: none;
+    transition: all 0.15s ease;
+}
+
+.sidebar-link:hover {
+    background-color: var(--bg-card-hover);
+    color: var(--text-primary);
+}
+
+.sidebar-link.active {
+    background-color: rgba(0, 255, 136, 0.08);
+    color: var(--accent-green);
+    border-left: 2px solid var(--accent-green);
+}
+
+/* ---- Terminal Panel ---- */
+.terminal-panel {
+    background-color: #0a0e1a;
+    font-family: 'JetBrains Mono', monospace;
+    line-height: 1.5;
+}
+
+.terminal-panel .log-route   { color: #44aaff; }
+.terminal-panel .log-start   { color: #ffaa00; }
+.terminal-panel .log-find    { color: #ff4444; }
+.terminal-panel .log-done    { color: #00ff88; }
+.terminal-panel .log-err     { color: #ff4444; font-weight: bold; }
+.terminal-panel .log-synth   { color: #bb88ff; }
+.terminal-panel .log-system  { color: var(--text-muted); }
+
+/* ---- Agent Status Dots ---- */
+.status-dot-active {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background-color: var(--accent-green);
+    box-shadow: 0 0 6px rgba(0, 255, 136, 0.5);
+    animation: pulse-dot 2s ease-in-out infinite;
+}
+
+.status-dot-idle {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background-color: var(--text-muted);
+}
+
+.status-dot-error {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background-color: var(--accent-red);
+    box-shadow: 0 0 6px rgba(255, 68, 68, 0.5);
+}
+
+/* ---- Agent Cards ---- */
+.agent-card {
+    background-color: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 0.5rem;
+    padding: 1.25rem;
+    transition: all 0.2s ease;
+}
+
+.agent-card:hover {
+    border-color: rgba(100, 116, 139, 0.4);
+    background-color: var(--bg-card-hover);
+}
+
+/* ---- HTMX Loading Indicator ---- */
+.htmx-indicator {
+    display: none;
+}
+
+.htmx-request .htmx-indicator,
+.htmx-request.htmx-indicator {
+    display: flex;
+}
+
+/* ---- KEV Warning Badge ---- */
+.kev-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    font-size: 0.7rem;
+    font-weight: 700;
+    color: var(--accent-red);
+}
+
+/* ---- Filter Bar ---- */
+.filter-select {
+    background-color: var(--bg-card);
+    border: 1px solid var(--border);
+    color: var(--text-primary);
+    border-radius: 0.375rem;
+    padding: 0.5rem 0.75rem;
+    font-size: 0.8125rem;
+    font-family: 'Inter', system-ui, sans-serif;
+    outline: none;
+    transition: border-color 0.15s ease;
+    cursor: pointer;
+    appearance: auto;
+}
+
+.filter-select:focus {
+    border-color: var(--accent-blue);
+}
+
+/* ---- Run Query Textarea ---- */
+.query-input {
+    background-color: #0a0e1a;
+    border: 1px solid var(--border);
+    color: var(--text-primary);
+    border-radius: 0.5rem;
+    padding: 1rem;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.875rem;
+    resize: vertical;
+    outline: none;
+    transition: border-color 0.2s ease;
+    width: 100%;
+    min-height: 8rem;
+}
+
+.query-input:focus {
+    border-color: var(--accent-green);
+    box-shadow: 0 0 0 2px rgba(0, 255, 136, 0.1);
+}
+
+.query-input::placeholder {
+    color: var(--text-muted);
+    opacity: 0.6;
+}
+
+/* ---- Run Button ---- */
+.run-button {
+    background: linear-gradient(135deg, rgba(0, 255, 136, 0.15), rgba(0, 255, 136, 0.05));
+    border: 1px solid rgba(0, 255, 136, 0.3);
+    color: var(--accent-green);
+    font-weight: 600;
+    padding: 0.625rem 1.5rem;
+    border-radius: 0.375rem;
+    font-size: 0.875rem;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.run-button:hover {
+    background: linear-gradient(135deg, rgba(0, 255, 136, 0.25), rgba(0, 255, 136, 0.1));
+    border-color: rgba(0, 255, 136, 0.5);
+    transform: translateY(-1px);
+}
+
+.run-button:active {
+    transform: translateY(0);
+}
+
+/* ---- Integration Status ---- */
+.integration-enabled {
+    color: var(--accent-green);
+}
+
+.integration-disabled {
+    color: var(--accent-red);
+}
+
+/* ---- Animations ---- */
+@keyframes pulse-critical {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.7; }
+}
+
+@keyframes pulse-mock {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.6; }
+}
+
+@keyframes pulse-live {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.7; }
+}
+
+@keyframes pulse-dot {
+    0%, 100% { box-shadow: 0 0 4px rgba(0, 255, 136, 0.4); }
+    50% { box-shadow: 0 0 10px rgba(0, 255, 136, 0.7); }
+}
+
+/* ---- Card Section Headers ---- */
+.section-header {
+    font-size: 0.875rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-muted);
+    margin-bottom: 0.75rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+/* ---- Empty State ---- */
+.empty-state {
+    text-align: center;
+    padding: 3rem 1rem;
+    color: var(--text-muted);
+}
+
+.empty-state .empty-icon {
+    font-size: 2.5rem;
+    margin-bottom: 0.75rem;
+    opacity: 0.4;
+}
+
+/* ---- Truncate text ---- */
+.truncate-cell {
+    max-width: 300px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}

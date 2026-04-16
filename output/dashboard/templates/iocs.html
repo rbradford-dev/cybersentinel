@@ -1,0 +1,143 @@
+{% extends "base.html" %}
+
+{% block title %}IOCs - {{ config.DASHBOARD_TITLE }}{% endblock %}
+
+{% block content %}
+<!-- Page Header -->
+<div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
+    <div>
+        <h1 class="text-xl font-semibold text-cs-text">Indicators of Compromise</h1>
+        <p class="text-sm text-cs-muted mt-1">Tracked IOCs across all sources</p>
+    </div>
+
+    <!-- Filter by IOC type -->
+    <div class="flex items-center gap-2">
+        <label for="ioc-type-filter" class="text-xs font-semibold text-cs-muted uppercase tracking-wider">Type</label>
+        <select id="ioc-type-filter" class="filter-select" onchange="filterIOCType(this.value)">
+            <option value="all">All</option>
+            <option value="ip">IP</option>
+            <option value="domain">Domain</option>
+            <option value="hash">Hash</option>
+            <option value="url">URL</option>
+            <option value="email">Email</option>
+        </select>
+    </div>
+</div>
+
+{% if iocs %}
+<!-- IOC Table -->
+<div class="bg-cs-card border border-cs-border rounded-lg overflow-hidden">
+    <div class="overflow-x-auto">
+        <table class="data-table" id="ioc-table">
+            <thead>
+                <tr>
+                    <th>Type</th>
+                    <th>Value</th>
+                    <th>Severity</th>
+                    <th>Confidence</th>
+                    <th>Source</th>
+                    <th>First Seen</th>
+                    <th>Last Seen</th>
+                    <th>Active</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for ioc in iocs %}
+                <tr data-ioc-type="{{ ioc.ioc_type | lower }}">
+                    <!-- Type -->
+                    <td>
+                        <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-mono font-semibold uppercase
+                            {% if ioc.ioc_type | lower == 'ip' %}
+                                bg-blue-900/30 text-cs-blue border border-blue-700/30
+                            {% elif ioc.ioc_type | lower == 'domain' %}
+                                bg-purple-900/30 text-purple-400 border border-purple-700/30
+                            {% elif ioc.ioc_type | lower == 'hash' %}
+                                bg-orange-900/30 text-cs-orange border border-orange-700/30
+                            {% elif ioc.ioc_type | lower == 'url' %}
+                                bg-green-900/30 text-cs-green border border-green-700/30
+                            {% elif ioc.ioc_type | lower == 'email' %}
+                                bg-yellow-900/30 text-cs-yellow border border-yellow-700/30
+                            {% else %}
+                                bg-gray-900/30 text-cs-muted border border-gray-700/30
+                            {% endif %}
+                        ">{{ ioc.ioc_type }}</span>
+                    </td>
+
+                    <!-- Value (mono) -->
+                    <td class="font-mono text-sm truncate-cell" title="{{ ioc.value }}">{{ ioc.value }}</td>
+
+                    <!-- Severity badge -->
+                    <td>
+                        {% if ioc.severity | lower == 'critical' %}
+                            <span class="badge-critical">Critical</span>
+                        {% elif ioc.severity | lower == 'high' %}
+                            <span class="badge-high">High</span>
+                        {% elif ioc.severity | lower == 'medium' %}
+                            <span class="badge-medium">Medium</span>
+                        {% elif ioc.severity | lower == 'low' %}
+                            <span class="badge-low">Low</span>
+                        {% else %}
+                            <span class="badge-info">{{ ioc.severity or 'N/A' }}</span>
+                        {% endif %}
+                    </td>
+
+                    <!-- Confidence % -->
+                    <td>
+                        <div class="flex items-center gap-2">
+                            <div class="w-16 h-1.5 bg-cs-border rounded-full overflow-hidden">
+                                <div class="h-full rounded-full
+                                    {% if ioc.confidence >= 80 %}bg-cs-green{% elif ioc.confidence >= 50 %}bg-cs-yellow{% else %}bg-cs-muted{% endif %}"
+                                    style="width: {{ ioc.confidence }}%">
+                                </div>
+                            </div>
+                            <span class="text-xs font-mono text-cs-muted">{{ ioc.confidence }}%</span>
+                        </div>
+                    </td>
+
+                    <!-- Source -->
+                    <td class="text-sm text-cs-muted">{{ ioc.source or '—' }}</td>
+
+                    <!-- First Seen -->
+                    <td class="text-xs font-mono text-cs-muted whitespace-nowrap">{{ ioc.first_seen or '—' }}</td>
+
+                    <!-- Last Seen -->
+                    <td class="text-xs font-mono text-cs-muted whitespace-nowrap">{{ ioc.last_seen or '—' }}</td>
+
+                    <!-- Active status -->
+                    <td class="text-center">
+                        {% if ioc.is_active %}
+                            <span class="status-dot-active" title="Active"></span>
+                        {% else %}
+                            <span class="status-dot-idle" title="Inactive"></span>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% else %}
+<!-- Empty State -->
+<div class="empty-state">
+    <div class="empty-icon">&#128269;</div>
+    <p class="text-lg font-medium text-cs-muted">No IOCs recorded yet.</p>
+    <p class="text-sm text-cs-muted mt-1">Run a query to start collecting indicators of compromise.</p>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+    function filterIOCType(type) {
+        var rows = document.querySelectorAll('#ioc-table tbody tr');
+        rows.forEach(function(row) {
+            if (type === 'all' || row.getAttribute('data-ioc-type') === type) {
+                row.style.display = '';
+            } else {
+                row.style.display = 'none';
+            }
+        });
+    }
+</script>
+{% endblock %}

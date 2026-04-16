@@ -353,6 +353,97 @@ class Repository:
         conn.commit()
 
     # ------------------------------------------------------------------
+    # Paginated queries (Dashboard API — Phase 3)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def get_findings_paginated(
+        limit: int = 50,
+        offset: int = 0,
+        severity: Optional[str] = None,
+    ) -> dict:
+        """Return findings page with total count for API pagination."""
+        conn = get_connection()
+        where = ""
+        params: list = []
+        if severity:
+            where = "WHERE LOWER(severity) = LOWER(?)"
+            params.append(severity)
+
+        total_row = conn.execute(
+            f"SELECT COUNT(*) as cnt FROM findings {where}", params
+        ).fetchone()
+        total = total_row["cnt"] if total_row else 0
+
+        params_page = list(params) + [limit, offset]
+        rows = conn.execute(
+            f"SELECT * FROM findings {where} ORDER BY created_at DESC LIMIT ? OFFSET ?",
+            params_page,
+        ).fetchall()
+        return {"findings": [dict(r) for r in rows], "total": total}
+
+    @staticmethod
+    def get_iocs_paginated(
+        limit: int = 50,
+        offset: int = 0,
+        ioc_type: Optional[str] = None,
+    ) -> dict:
+        """Return IOCs page with total count for API pagination."""
+        conn = get_connection()
+        where = ""
+        params: list = []
+        if ioc_type:
+            where = "WHERE ioc_type = ?"
+            params.append(ioc_type)
+
+        total_row = conn.execute(
+            f"SELECT COUNT(*) as cnt FROM iocs {where}", params
+        ).fetchone()
+        total = total_row["cnt"] if total_row else 0
+
+        params_page = list(params) + [limit, offset]
+        rows = conn.execute(
+            f"SELECT * FROM iocs {where} ORDER BY last_seen DESC LIMIT ? OFFSET ?",
+            params_page,
+        ).fetchall()
+        return {"iocs": [dict(r) for r in rows], "total": total}
+
+    @staticmethod
+    def get_cves_paginated(
+        limit: int = 50,
+        offset: int = 0,
+        priority: Optional[str] = None,
+    ) -> dict:
+        """Return CVE findings page with total count for API pagination."""
+        conn = get_connection()
+        where = ""
+        params: list = []
+        if priority:
+            where = "WHERE priority = ?"
+            params.append(priority)
+
+        total_row = conn.execute(
+            f"SELECT COUNT(*) as cnt FROM cve_findings {where}", params
+        ).fetchone()
+        total = total_row["cnt"] if total_row else 0
+
+        params_page = list(params) + [limit, offset]
+        rows = conn.execute(
+            f"SELECT * FROM cve_findings {where} ORDER BY last_updated DESC LIMIT ? OFFSET ?",
+            params_page,
+        ).fetchall()
+        return {"cves": [dict(r) for r in rows], "total": total}
+
+    @staticmethod
+    def get_last_scan_time() -> Optional[str]:
+        """Return ISO timestamp of the most recent agent session completion."""
+        conn = get_connection()
+        row = conn.execute(
+            "SELECT completed_at FROM agent_sessions ORDER BY completed_at DESC LIMIT 1"
+        ).fetchone()
+        return row["completed_at"] if row else None
+
+    # ------------------------------------------------------------------
     # Conversation history
     # ------------------------------------------------------------------
 

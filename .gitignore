@@ -37,6 +37,9 @@ env/
 .DS_Store
 Thumbs.db
 
+# Reports
+reports/
+
 # Testing
 .pytest_cache/
 htmlcov/
