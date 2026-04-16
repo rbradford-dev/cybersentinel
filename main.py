@@ -37,6 +37,15 @@ def build_parser() -> argparse.ArgumentParser:
     # status — database summary
     sub.add_parser("status", help="Show database record counts")
 
+    # test-exa — standalone Exa API connectivity test
+    te = sub.add_parser("test-exa", help="Test Exa API key and connection directly")
+    te.add_argument(
+        "query",
+        nargs="?",
+        default="CVE-2024-38094 vulnerability analysis",
+        help="Search query (default: CVE-2024-38094 vulnerability analysis)",
+    )
+
     # interactive — Phase 2 placeholder
     sub.add_parser("interactive", help="Interactive session (Phase 2)")
 
@@ -89,6 +98,126 @@ async def cmd_status() -> int:
     return 0
 
 
+async def cmd_test_exa(query: str) -> int:
+    """Run a standalone Exa API search and print raw results."""
+    from rich.console import Console
+    from rich.panel import Panel
+    from rich.table import Table
+    from rich import box
+
+    from integrations.exa_client import ExaClient
+
+    console = Console()
+
+    # --- Step 1: Show config diagnostics ---
+    console.print()
+    diag = Table(
+        title="Exa Configuration Diagnostics",
+        box=box.ROUNDED,
+        header_style="bold",
+        show_lines=True,
+    )
+    diag.add_column("Check", style="bold")
+    diag.add_column("Value")
+    diag.add_column("Status")
+
+    key_raw = config.EXA_API_KEY
+    if key_raw:
+        masked = key_raw[:4] + "..." + key_raw[-4:] if len(key_raw) > 8 else "****"
+        key_status = "[bold green]LOADED[/bold green]"
+    else:
+        masked = "(empty)"
+        key_status = "[bold red]MISSING[/bold red]"
+    diag.add_row("EXA_API_KEY", masked, key_status)
+    diag.add_row("EXA_BASE_URL", config.EXA_BASE_URL, "[green]OK[/green]")
+    diag.add_row("EXA_SEARCH_TYPE", config.EXA_SEARCH_TYPE, "[green]OK[/green]")
+    diag.add_row("EXA_NUM_RESULTS", str(config.EXA_NUM_RESULTS), "[green]OK[/green]")
+    diag.add_row(
+        "USE_MOCK_LLM",
+        str(config.USE_MOCK_LLM),
+        "[dim](does not affect Exa — Exa always uses real API)[/dim]",
+    )
+    console.print(diag)
+
+    if not key_raw:
+        console.print(
+            "\n[bold red]ERROR:[/bold red] EXA_API_KEY is empty. "
+            "Add it to your .env file:\n"
+            "  EXA_API_KEY=your-key-here\n"
+        )
+        return 1
+
+    # --- Step 2: Create client and check enabled state ---
+    client = ExaClient()
+    console.print(f"\n  Client enabled: [bold]{'YES' if client.enabled else 'NO'}[/bold]")
+
+    if not client.enabled:
+        console.print("[bold red]Client is disabled even though key is set. Check logs.[/bold red]")
+        return 1
+
+    # --- Step 3: Run the search ---
+    console.print(f"\n  Searching Exa for: [cyan]{query}[/cyan]\n")
+
+    results = await client.search_cve(query) if query.startswith("CVE-") else []
+    if not results:
+        # Fall back to general _search if search_cve returned empty or query is not a CVE
+        results = await client._search(query=query, num_results=config.EXA_NUM_RESULTS)
+
+    # --- Step 4: Print results ---
+    if not results:
+        console.print(
+            Panel(
+                "[yellow]No results returned.[/yellow]\n\n"
+                "Possible causes:\n"
+                "  1. API key is invalid → check dashboard.exa.ai/api-keys\n"
+                "  2. Query returned zero matches\n"
+                "  3. Network / firewall issue\n\n"
+                "Check cybersentinel.log for full HTTP request/response details.",
+                title="[bold yellow]Exa Search: 0 Results[/bold yellow]",
+                border_style="yellow",
+            )
+        )
+        return 1
+
+    table = Table(
+        title=f"Exa Search Results ({len(results)} found)",
+        box=box.ROUNDED,
+        show_lines=True,
+        header_style="bold white on dark_blue",
+    )
+    table.add_column("#", width=3, justify="right")
+    table.add_column("Score", width=6, justify="center")
+    table.add_column("Title", max_width=50)
+    table.add_column("URL", max_width=55)
+    table.add_column("Published", width=12)
+
+    for i, r in enumerate(results, 1):
+        pub = r.published_date[:10] if r.published_date else "—"
+        table.add_row(
+            str(i),
+            f"{r.score:.2f}",
+            r.title[:50] if r.title else "—",
+            r.url[:55] if r.url else "—",
+            pub,
+        )
+
+    console.print(table)
+
+    # Print highlights from the first result for quick verification
+    if results[0].highlights:
+        console.print(
+            Panel(
+                results[0].highlights[0][:500],
+                title=f"[bold]Top Highlight — {results[0].title[:40]}[/bold]",
+                border_style="cyan",
+            )
+        )
+
+    console.print(f"\n  [bold green]Exa API is working.[/bold green] "
+                  f"{len(results)} results returned.\n")
+    return 0
+
+
 def main() -> None:
     """Main entry point."""
     setup_logging()
@@ -114,6 +243,8 @@ def main() -> None:
         exit_code = asyncio.run(cmd_kev(args.days))
     elif args.command == "status":
         exit_code = asyncio.run(cmd_status())
+    elif args.command == "test-exa":
+        exit_code = asyncio.run(cmd_test_exa(args.query))
     elif args.command == "interactive":
         from rich import print as rprint
         rprint("[yellow]Interactive mode is planned for Phase 2.[/yellow]")

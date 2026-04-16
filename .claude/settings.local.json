@@ -1,7 +1,10 @@
 {
   "permissions": {
     "allow": [
-      "Bash(python -m pytest tests/ -v)"
+      "Bash(python -m pytest tests/ -v)",
+      "Bash(python main.py test-exa)",
+      "Bash(set PYTHONIOENCODING=utf-8)",
+      "Bash(python -m pytest tests/ -v --tb=short)"
     ]
   }
 }

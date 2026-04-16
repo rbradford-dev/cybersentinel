@@ -55,6 +55,16 @@ VT_RATE_LIMIT: int = 4  # per minute, free tier
 SHODAN_API_KEY: str = os.getenv("SHODAN_API_KEY", "")
 
 # ---------------------------------------------------------------------------
+# Exa (Web Search Intelligence)
+# ---------------------------------------------------------------------------
+EXA_API_KEY: str = os.getenv("EXA_API_KEY", "")
+EXA_BASE_URL: str = "https://api.exa.ai"
+EXA_SEARCH_TYPE: str = os.getenv("EXA_SEARCH_TYPE", "auto")  # auto|fast|deep
+EXA_NUM_RESULTS: int = int(os.getenv("EXA_NUM_RESULTS", "5"))
+EXA_HIGHLIGHTS_MAX_CHARS: int = 4000
+EXA_CACHE_TTL: int = 3600  # 1 hour
+
+# ---------------------------------------------------------------------------
 # Database
 # ---------------------------------------------------------------------------
 DB_PATH: str = os.getenv("DB_PATH", str(Path(__file__).parent / "cybersentinel.db"))

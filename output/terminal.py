@@ -14,7 +14,7 @@ import config
 
 console = Console()
 
-BANNER = r"""
+BANNER_UNICODE = r"""
  ██████╗██╗   ██╗██████╗ ███████╗██████╗     ███████╗███████╗███╗   ██╗████████╗██╗███╗   ██╗███████╗██╗
 ██╔════╝╚██╗ ██╔╝██╔══██╗██╔════╝██╔══██╗    ██╔════╝██╔════╝████╗  ██║╚══██╔══╝██║████╗  ██║██╔════╝██║
 ██║      ╚████╔╝ ██████╔╝█████╗  ██████╔╝    ███████╗█████╗  ██╔██╗ ██║   ██║   ██║██╔██╗ ██║█████╗  ██║
@@ -22,6 +22,24 @@ BANNER = r"""
 ╚██████╗   ██║   ██████╔╝███████╗██║  ██║    ███████║███████╗██║ ╚████║   ██║   ██║██║ ╚████║███████╗███████╗
  ╚═════╝   ╚═╝   ╚═════╝ ╚══════╝╚═╝  ╚═╝    ╚══════╝╚══════╝╚═╝  ╚═══╝   ╚═╝   ╚═╝╚═╝  ╚═══╝╚══════╝╚══════╝
 """
+
+# ASCII-safe fallback for Windows legacy consoles (cp1252)
+BANNER_ASCII = r"""
+  ______   __  __  ____    ______  ____       _____  ______  __  __  ______  ____  __  __  ______  __
+ / ____/  / / / / / __ )  / ____/ / __ \     / ___/ / ____/ / | / / /_  __/ / _/ / | / / / ____/ / /
+/ /      / /_/ / / __  | / __/   / /_/ /     \__ \ / __/   /  |/ /   / /    / / /  |/ / / __/   / /
+/ /___  / __  / / /_/ / / /___  / _, _/     ___/ // /___  / /|  /   / /   _/ / / /|  / / /___  / /___
+\____/  /_/ /_/ /_____/ /_____/ /_/ |_|     /____//_____/ /_/ |_/   /_/   /___//_/ |_/ /_____/ /_____/
+"""
+
+
+def _pick_banner() -> str:
+    """Return the Unicode banner if the terminal supports it, else ASCII."""
+    try:
+        BANNER_UNICODE.encode(console.file.encoding or "utf-8")
+        return BANNER_UNICODE
+    except (UnicodeEncodeError, LookupError):
+        return BANNER_ASCII
 
 SEVERITY_STYLES = {
     "critical": "bold red",
@@ -42,7 +60,7 @@ class TerminalOutput:
         mode_style = "dim yellow" if config.USE_MOCK_LLM else "bold green"
         now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
 
-        header = Text(BANNER, style="bold red")
+        header = Text(_pick_banner(), style="bold red")
         info_line = Text()
         info_line.append(f"  v{config.VERSION}", style="dim white")
         info_line.append("  |  ", style="dim")
