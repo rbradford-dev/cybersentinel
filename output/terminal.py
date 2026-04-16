@@ -264,6 +264,145 @@ class TerminalOutput:
         )
 
     @staticmethod
+    def print_parallel_dispatch(agent_names: list[str]) -> None:
+        """Print a notice that multiple agents are being dispatched in parallel."""
+        text = Text()
+        text.append("  ⟴ ", style="bold magenta")
+        text.append("Parallel dispatch: ", style="bold")
+        text.append(", ".join(agent_names), style="cyan")
+        console.print(text)
+
+    @staticmethod
+    def print_ioc_table(findings: list[dict]) -> None:
+        """Print a Rich table of IOC findings."""
+        table = Table(
+            title="Threat Intelligence — IOC Enrichment",
+            box=box.SIMPLE_HEAVY,
+            show_lines=True,
+            title_style="bold",
+            header_style="bold white on dark_red",
+            padding=(0, 1),
+        )
+
+        table.add_column("Severity", width=10, justify="center")
+        table.add_column("IOC", width=20)
+        table.add_column("Type", width=10)
+        table.add_column("Title", max_width=45)
+        table.add_column("Confidence", width=10, justify="center")
+
+        for f in findings:
+            sev = f.get("severity", "info")
+            sev_style = SEVERITY_STYLES.get(sev, "white")
+            ioc_value = f.get("cve_id", f.get("affected_asset", "—"))
+            ioc_type = f.get("finding_type", "threat_intel")
+
+            conf = f.get("confidence", 0.0)
+            conf_str = f"{conf:.0%}"
+
+            title = f.get("title", "")
+            if len(title) > 45:
+                title = title[:42] + "..."
+
+            table.add_row(
+                Text(sev.upper(), style=sev_style),
+                str(ioc_value),
+                ioc_type,
+                title,
+                conf_str,
+            )
+
+        console.print()
+        console.print(table)
+
+    @staticmethod
+    def print_log_findings_table(findings: list[dict]) -> None:
+        """Print a Rich table of log analysis findings."""
+        table = Table(
+            title="Log Analysis — Anomaly Detection",
+            box=box.SIMPLE_HEAVY,
+            show_lines=True,
+            title_style="bold",
+            header_style="bold white on dark_red",
+            padding=(0, 1),
+        )
+
+        table.add_column("Severity", width=10, justify="center")
+        table.add_column("Type", width=20)
+        table.add_column("Title", max_width=50)
+        table.add_column("MITRE", width=15)
+        table.add_column("Confidence", width=10, justify="center")
+
+        for f in findings:
+            sev = f.get("severity", "info")
+            sev_style = SEVERITY_STYLES.get(sev, "white")
+
+            mitre = ", ".join(f.get("mitre_techniques", [])[:3]) or "—"
+
+            conf = f.get("confidence", 0.0)
+            conf_str = f"{conf:.0%}"
+
+            title = f.get("title", "")
+            if len(title) > 50:
+                title = title[:47] + "..."
+
+            table.add_row(
+                Text(sev.upper(), style=sev_style),
+                f.get("finding_type", "log_anomaly"),
+                title,
+                mitre,
+                conf_str,
+            )
+
+        console.print()
+        console.print(table)
+
+    @staticmethod
+    def print_report_summary(report_data: dict) -> None:
+        """Print a Rich panel summarizing a generated report."""
+        content = Text()
+        content.append(report_data.get("report_title", "Security Report"), style="bold white")
+        content.append(f"\nType: ", style="bold")
+        content.append(report_data.get("report_type", "executive"), style="cyan")
+        content.append(f"\nRisk Rating: ", style="bold")
+
+        risk = report_data.get("risk_rating", "UNKNOWN")
+        risk_style = "bold red" if risk in ("CRITICAL", "HIGH") else "yellow"
+        content.append(risk, style=risk_style)
+
+        exec_summary = report_data.get("executive_summary", "")
+        if exec_summary:
+            content.append(f"\n\n{exec_summary}", style="white")
+
+        key_findings = report_data.get("key_findings", [])
+        if key_findings:
+            content.append("\n\nKey Findings:", style="bold")
+            for kf in key_findings[:5]:
+                content.append(f"\n  • {kf}", style="white")
+
+        recommendations = report_data.get("recommendations", [])
+        if recommendations:
+            content.append("\n\nRecommendations:", style="bold")
+            for rec in recommendations[:5]:
+                content.append(f"\n  → {rec}", style="dim white")
+
+        panel = Panel(
+            content,
+            title="[bold]Generated Report[/bold]",
+            border_style="blue",
+            box=box.ROUNDED,
+            padding=(1, 2),
+        )
+        console.print()
+        console.print(panel)
+
+    @staticmethod
+    def print_export_confirmation(file_path: str, record_count: int) -> None:
+        """Print a confirmation that data was exported to a file."""
+        console.print(
+            f"  [bold green]✓ Exported {record_count} record(s) to {file_path}[/bold green]"
+        )
+
+    @staticmethod
     def print_status_summary(summary: dict) -> None:
         """Print a database status summary table."""
         table = Table(

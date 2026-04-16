@@ -46,8 +46,37 @@ def build_parser() -> argparse.ArgumentParser:
         help="Search query (default: CVE-2024-38094 vulnerability analysis)",
     )
 
-    # interactive — Phase 2 placeholder
-    sub.add_parser("interactive", help="Interactive session (Phase 2)")
+    # enrich-ip — IP IOC enrichment
+    eip = sub.add_parser("enrich-ip", help="Enrich an IP address via threat intel feeds")
+    eip.add_argument("ip", type=str, help="IP address to enrich (e.g. 198.51.100.23)")
+
+    # analyze-log — log analysis
+    al = sub.add_parser("analyze-log", help="Analyze a log file for anomalies")
+    al.add_argument("source", nargs="?", default=None, help="Path to log file")
+    al.add_argument("--stdin", action="store_true", help="Read log lines from stdin")
+
+    # report — generate a report
+    rp = sub.add_parser("report", help="Generate a security report from stored findings")
+    rp.add_argument(
+        "--type",
+        dest="report_type",
+        choices=["executive", "technical", "compliance"],
+        default="executive",
+        help="Report type (default: executive)",
+    )
+    rp.add_argument(
+        "--export",
+        action="store_true",
+        help="Also export the report as JSON",
+    )
+
+    # assess — full multi-agent assessment
+    a = sub.add_parser("assess", help="Full multi-agent threat assessment")
+    a.add_argument("--ip", type=str, default=None, help="IP address to include in assessment")
+    a.add_argument("--cve", type=str, default=None, help="CVE ID to include in assessment")
+
+    # interactive — Phase 3 placeholder
+    sub.add_parser("interactive", help="Interactive session (Phase 3)")
 
     return parser
 
@@ -96,6 +125,71 @@ async def cmd_status() -> int:
     summary = await repo.get_db_summary()
     term.print_status_summary(summary)
     return 0
+
+
+async def cmd_enrich_ip(ip: str) -> int:
+    """Handle IP enrichment."""
+    from core.orchestrator import Orchestrator
+
+    orch = Orchestrator()
+    result = await orch.handle_ip(ip)
+    return 0 if result.status in ("success", "partial") else 1
+
+
+async def cmd_analyze_log(source: str | None, from_stdin: bool) -> int:
+    """Handle log analysis."""
+    from core.orchestrator import Orchestrator
+
+    log_lines: list[str] | None = None
+    log_source: str = source or "stdin"
+
+    if from_stdin:
+        import sys as _sys
+
+        log_lines = _sys.stdin.read().splitlines()
+        log_source = "stdin"
+    elif source:
+        from pathlib import Path
+
+        p = Path(source)
+        if not p.exists():
+            term.print_error("log_analysis", f"File not found: {source}")
+            return 1
+        log_lines = p.read_text(encoding="utf-8", errors="replace").splitlines()
+        log_source = source
+    else:
+        term.print_error("log_analysis", "Provide a log file path or use --stdin")
+        return 1
+
+    orch = Orchestrator()
+    result = await orch.handle_log(log_source, log_lines)
+    return 0 if result.status in ("success", "partial") else 1
+
+
+async def cmd_report(report_type: str, export: bool) -> int:
+    """Handle report generation."""
+    from core.orchestrator import Orchestrator
+
+    orch = Orchestrator()
+    result = await orch.handle_report(report_type)
+
+    if export and result.raw_data:
+        from output.json_exporter import JSONExporter
+
+        exporter = JSONExporter()
+        path = exporter.export_report(result.raw_data)
+        term.print_export_confirmation(path, 1)
+
+    return 0 if result.status in ("success", "partial") else 1
+
+
+async def cmd_assess(ip: str | None, cve: str | None) -> int:
+    """Handle a full multi-agent assessment."""
+    from core.orchestrator import Orchestrator
+
+    orch = Orchestrator()
+    result = await orch.handle_assess(ip=ip, cve_id=cve)
+    return 0 if result.status in ("success", "partial") else 1
 
 
 async def cmd_test_exa(query: str) -> int:
@@ -243,11 +337,19 @@ def main() -> None:
         exit_code = asyncio.run(cmd_kev(args.days))
     elif args.command == "status":
         exit_code = asyncio.run(cmd_status())
+    elif args.command == "enrich-ip":
+        exit_code = asyncio.run(cmd_enrich_ip(args.ip))
+    elif args.command == "analyze-log":
+        exit_code = asyncio.run(cmd_analyze_log(args.source, args.stdin))
+    elif args.command == "report":
+        exit_code = asyncio.run(cmd_report(args.report_type, args.export))
+    elif args.command == "assess":
+        exit_code = asyncio.run(cmd_assess(args.ip, args.cve))
     elif args.command == "test-exa":
         exit_code = asyncio.run(cmd_test_exa(args.query))
     elif args.command == "interactive":
         from rich import print as rprint
-        rprint("[yellow]Interactive mode is planned for Phase 2.[/yellow]")
+        rprint("[yellow]Interactive mode is planned for Phase 3.[/yellow]")
         exit_code = 0
     else:
         parser.print_help()

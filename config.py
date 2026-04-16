@@ -32,16 +32,21 @@ CISA_KEV_URL: str = "https://www.cisa.gov/sites/default/files/feeds/known_exploi
 CISA_KEV_CACHE_TTL: int = 14400  # 4 hours in seconds
 
 # ---------------------------------------------------------------------------
-# AbuseIPDB (Phase 2)
+# AbuseIPDB
 # ---------------------------------------------------------------------------
 ABUSEIPDB_API_KEY: str = os.getenv("ABUSEIPDB_API_KEY", "")
+ABUSEIPDB_BASE_URL: str = "https://api.abuseipdb.com/api/v2"
 ABUSEIPDB_RATE_LIMIT: int = 1000  # per day, free tier
+ABUSEIPDB_CACHE_TTL: int = 3600  # 1 hour
+ABUSEIPDB_CONFIDENCE_THRESHOLD: int = 50  # abuse confidence score threshold
 
 # ---------------------------------------------------------------------------
-# AlienVault OTX (Phase 2)
+# AlienVault OTX
 # ---------------------------------------------------------------------------
 OTX_API_KEY: str = os.getenv("OTX_API_KEY", "")
+OTX_BASE_URL: str = "https://otx.alienvault.com/api/v1"
 OTX_RATE_LIMIT: int = 10000  # per hour
+OTX_CACHE_TTL: int = 1800  # 30 minutes
 
 # ---------------------------------------------------------------------------
 # VirusTotal (Phase 2)
@@ -77,9 +82,23 @@ CVSS_HIGH_THRESHOLD: float = 7.0
 CVSS_MEDIUM_THRESHOLD: float = 4.0
 
 # ---------------------------------------------------------------------------
+# Report Generation
+# ---------------------------------------------------------------------------
+REPORT_OUTPUT_DIR: str = os.getenv(
+    "REPORT_OUTPUT_DIR", str(Path(__file__).parent / "reports")
+)
+REPORT_MAX_FINDINGS: int = int(os.getenv("REPORT_MAX_FINDINGS", "100"))
+
+# ---------------------------------------------------------------------------
+# Log Analysis
+# ---------------------------------------------------------------------------
+LOG_MAX_LINES: int = int(os.getenv("LOG_MAX_LINES", "50000"))
+LOG_ANOMALY_THRESHOLD: float = float(os.getenv("LOG_ANOMALY_THRESHOLD", "2.0"))
+
+# ---------------------------------------------------------------------------
 # Application
 # ---------------------------------------------------------------------------
-VERSION: str = "0.1.0"
+VERSION: str = "0.2.0"
 APP_NAME: str = "CyberSentinel"
 LOG_FILE: str = os.getenv("LOG_FILE", str(Path(__file__).parent / "cybersentinel.log"))
 LOG_LEVEL: str = os.getenv("LOG_LEVEL", "DEBUG")

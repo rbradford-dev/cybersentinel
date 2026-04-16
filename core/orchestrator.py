@@ -51,10 +51,13 @@ class Orchestrator:
     def _register_agents(self) -> None:
         """Register all available agents."""
         from agents.vulnerability_agent import VulnerabilityAgent
+        from agents.threat_intel_agent import ThreatIntelAgent
+        from agents.log_analysis_agent import LogAnalysisAgent
+        from agents.report_agent import ReportAgent
 
-        vuln = VulnerabilityAgent()
-        self._agents[vuln.name] = vuln
-        # Phase 2 agents will be registered here as they are implemented.
+        for agent_cls in (VulnerabilityAgent, ThreatIntelAgent, LogAnalysisAgent, ReportAgent):
+            agent = agent_cls()
+            self._agents[agent.name] = agent
 
     def get_agent(self, name: str) -> Optional[BaseAgent]:
         """Retrieve a registered agent by name."""
@@ -166,6 +169,34 @@ class Orchestrator:
             {"type": "cve_lookup", "keyword": "kev_recent", "days": days}
         )
 
+    async def handle_ip(self, ip: str) -> AgentResult:
+        """Convenience method for IP enrichment."""
+        return await self.handle({"type": "ip_check", "ip": ip})
+
+    async def handle_log(self, log_source: str, log_lines: Optional[list[str]] = None) -> AgentResult:
+        """Convenience method for log analysis."""
+        task: dict = {"type": "log_analysis", "log_source": log_source}
+        if log_lines is not None:
+            task["log_lines"] = log_lines
+        return await self.handle(task)
+
+    async def handle_report(self, report_type: str = "executive") -> AgentResult:
+        """Convenience method for report generation."""
+        return await self.handle({"type": "generate_report", "report_type": report_type})
+
+    async def handle_assess(
+        self,
+        ip: Optional[str] = None,
+        cve_id: Optional[str] = None,
+    ) -> AgentResult:
+        """Convenience method for full multi-agent assessment."""
+        task: dict = {"type": "full_assessment"}
+        if ip:
+            task["ip"] = ip
+        if cve_id:
+            task["cve_id"] = cve_id
+        return await self.handle(task)
+
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
@@ -197,7 +228,7 @@ class Orchestrator:
                 TerminalOutput.print_agent_start(agent.name, str(task.get("query", task.get("cve_id", ""))))
                 coros.append(agent.execute(task))
 
-        results = await asyncio.gather(*coros, return_exceptions=False)
+        results = await asyncio.gather(*coros, return_exceptions=True)
 
         # Wrap any unexpected exceptions
         safe_results: list[AgentResult] = []
@@ -207,6 +238,17 @@ class Orchestrator:
 
                 _t.print_agent_complete(r)
                 safe_results.append(r)
+            elif isinstance(r, Exception):
+                name = agent_names[idx] if idx < len(agent_names) else "unknown"
+                logger.error("Agent '%s' raised exception: %s", name, r)
+                safe_results.append(
+                    AgentResult(
+                        agent_name=name,
+                        status="error",
+                        error=str(r),
+                        summary=f"Agent {name} encountered an error: {r}",
+                    )
+                )
             else:
                 name = agent_names[idx] if idx < len(agent_names) else "unknown"
                 safe_results.append(

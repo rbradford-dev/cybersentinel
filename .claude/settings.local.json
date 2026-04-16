@@ -4,7 +4,9 @@
       "Bash(python -m pytest tests/ -v)",
       "Bash(python main.py test-exa)",
       "Bash(set PYTHONIOENCODING=utf-8)",
-      "Bash(python -m pytest tests/ -v --tb=short)"
+      "Bash(python -m pytest tests/ -v --tb=short)",
+      "Bash(python -c ':*)",
+      "Bash(python -m pytest tests/test_log_analysis_agent.py -v)"
     ]
   }
 }

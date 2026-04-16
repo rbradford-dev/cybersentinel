@@ -238,6 +238,121 @@ class Repository:
         return summary
 
     # ------------------------------------------------------------------
+    # Enhanced query methods (Phase 2)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    async def get_recent_findings(
+        days: int = 7, severity: Optional[str] = None, limit: int = 100
+    ) -> list[dict]:
+        """Retrieve findings from the last N days, optionally filtered by severity."""
+        conn = get_connection()
+        query = "SELECT * FROM findings WHERE created_at >= datetime('now', ?)"
+        params: list = [f"-{days} days"]
+        if severity:
+            query += " AND severity = ?"
+            params.append(severity)
+        query += " ORDER BY created_at DESC LIMIT ?"
+        params.append(limit)
+        rows = conn.execute(query, params).fetchall()
+        return [dict(r) for r in rows]
+
+    @staticmethod
+    async def get_ioc_by_value(value: str) -> Optional[dict]:
+        """Look up an IOC by its value (IP, domain, hash)."""
+        conn = get_connection()
+        row = conn.execute(
+            "SELECT * FROM iocs WHERE value = ?", (value,)
+        ).fetchone()
+        return dict(row) if row else None
+
+    @staticmethod
+    async def get_session_history(limit: int = 20) -> list[dict]:
+        """Retrieve recent agent sessions, most recent first."""
+        conn = get_connection()
+        rows = conn.execute(
+            "SELECT * FROM agent_sessions ORDER BY started_at DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    @staticmethod
+    async def get_database_stats() -> dict:
+        """Return detailed database statistics beyond simple counts."""
+        conn = get_connection()
+        stats: dict = {}
+
+        # Table counts
+        tables = ["iocs", "cve_findings", "findings", "agent_sessions", "conversation_history"]
+        for table in tables:
+            row = conn.execute(f"SELECT COUNT(*) as cnt FROM {table}").fetchone()
+            stats[f"{table}_count"] = row["cnt"] if row else 0
+
+        # Severity breakdown for findings
+        rows = conn.execute(
+            "SELECT severity, COUNT(*) as cnt FROM findings GROUP BY severity"
+        ).fetchall()
+        stats["findings_by_severity"] = {r["severity"]: r["cnt"] for r in rows}
+
+        # CVE KEV count
+        row = conn.execute(
+            "SELECT COUNT(*) as cnt FROM cve_findings WHERE is_kev = 1"
+        ).fetchone()
+        stats["kev_count"] = row["cnt"] if row else 0
+
+        # Active IOC count
+        row = conn.execute(
+            "SELECT COUNT(*) as cnt FROM iocs WHERE is_active = 1"
+        ).fetchone()
+        stats["active_iocs"] = row["cnt"] if row else 0
+
+        return stats
+
+    async def save_agent_session(
+        self,
+        session_id: str,
+        agent_name: str,
+        status: str,
+        findings_count: int = 0,
+        execution_time_ms: int = 0,
+        error_message: Optional[str] = None,
+    ) -> None:
+        """Insert a standalone agent session record."""
+        conn = get_connection()
+        now = datetime.now(timezone.utc).isoformat()
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO agent_sessions
+                (session_id, agent_name, status, findings_count,
+                 execution_time_ms, started_at, completed_at, error_message)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (session_id, agent_name, status, findings_count,
+             execution_time_ms, now, now, error_message),
+        )
+        conn.commit()
+
+    async def update_agent_session(
+        self,
+        session_id: str,
+        status: str,
+        findings_count: int = 0,
+        error_message: Optional[str] = None,
+    ) -> None:
+        """Update an existing agent session record."""
+        conn = get_connection()
+        now = datetime.now(timezone.utc).isoformat()
+        conn.execute(
+            """
+            UPDATE agent_sessions
+            SET status = ?, findings_count = ?, completed_at = ?, error_message = ?
+            WHERE session_id = ?
+            """,
+            (status, findings_count, now, error_message, session_id),
+        )
+        conn.commit()
+
+    # ------------------------------------------------------------------
     # Conversation history
     # ------------------------------------------------------------------
 

@@ -29,14 +29,25 @@ LOG_KEYWORDS = {
     "log", "logs", "alert", "alerts", "anomaly", "anomalies", "siem",
     "event", "events", "detection", "baseline", "correlation",
 }
+REPORT_KEYWORDS = {
+    "report", "summary", "executive", "briefing", "assessment",
+    "compliance", "audit", "generate", "export",
+}
+ASSESS_KEYWORDS = {
+    "full", "comprehensive", "complete", "overall", "assess",
+    "investigate", "deep", "thorough",
+}
 
 # Agent registry — maps intent to agent names
 INTENT_AGENT_MAP: dict[str, list[str]] = {
     "cve_lookup": ["vulnerability_agent"],
     "vulnerability_scan": ["vulnerability_agent"],
     "ip_check": ["threat_intel_agent"],
+    "ip_enrichment": ["threat_intel_agent"],
     "threat_intel": ["threat_intel_agent"],
     "log_analysis": ["log_analysis_agent"],
+    "generate_report": ["report_agent"],
+    "full_assessment": ["vulnerability_agent", "threat_intel_agent", "log_analysis_agent"],
     "general": ["vulnerability_agent"],
 }
 
@@ -104,12 +115,20 @@ def classify(user_input: str) -> RoutingDecision:
     vuln_overlap = words & VULN_KEYWORDS
     threat_overlap = words & THREAT_KEYWORDS
     log_overlap = words & LOG_KEYWORDS
+    report_overlap = words & REPORT_KEYWORDS
+    assess_overlap = words & ASSESS_KEYWORDS
+
+    # Check for file path pattern (e.g., /var/log/auth.log, C:\logs\security.evtx)
+    has_log_path = bool(re.search(r"(?:/[\w./]+\.(?:log|evtx|csv)|\b\w:\\[\w\\]+\.(?:log|evtx|csv))", user_input))
+    log_path_boost = 0.3 if has_log_path else 0.0
 
     # Score each category
     scores: dict[str, float] = {
         "vulnerability_scan": len(vuln_overlap) / max(len(VULN_KEYWORDS), 1),
         "threat_intel": len(threat_overlap) / max(len(THREAT_KEYWORDS), 1),
-        "log_analysis": len(log_overlap) / max(len(LOG_KEYWORDS), 1),
+        "log_analysis": (len(log_overlap) / max(len(LOG_KEYWORDS), 1)) + log_path_boost,
+        "generate_report": len(report_overlap) / max(len(REPORT_KEYWORDS), 1),
+        "full_assessment": len(assess_overlap) / max(len(ASSESS_KEYWORDS), 1),
     }
 
     best_intent = max(scores, key=lambda k: scores[k])
@@ -149,13 +168,20 @@ def classify_structured(task: dict) -> RoutingDecision:
         entities["keyword"] = task["keyword"]
     if task.get("ip"):
         entities["ipv4_addresses"] = [task["ip"]]
+    if task.get("log_source"):
+        entities["log_source"] = task["log_source"]
+    if task.get("report_type"):
+        entities["report_type"] = task["report_type"]
 
     intent_map: dict[str, str] = {
         "cve_lookup": "cve_lookup",
         "vulnerability_scan": "vulnerability_scan",
         "ip_check": "ip_check",
+        "ip_enrichment": "ip_enrichment",
         "threat_intel": "threat_intel",
         "log_analysis": "log_analysis",
+        "generate_report": "generate_report",
+        "full_assessment": "full_assessment",
     }
 
     intent = intent_map.get(task_type, "general")
