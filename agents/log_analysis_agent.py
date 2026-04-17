@@ -381,8 +381,13 @@ class LogAnalysisAgent(BaseAgent):
             )
 
         # ---- LLM enrichment ----
-        llm_prompt = self._build_llm_prompt(findings, stats)
-        llm_response = await self._call_llm(llm_prompt, LOG_ANALYSIS_SYSTEM_PROMPT)
+        llm_prompt = self._build_llm_prompt(findings, stats, events)
+        llm_response = await self._call_llm(
+            llm_prompt,
+            system_prompt=LOG_ANALYSIS_SYSTEM_PROMPT,
+            max_tokens=config.LOG_AGENT_MAX_TOKENS,
+            temperature=0.1,
+        )
         enriched = self._enrich_with_llm(findings, llm_response)
 
         summary = self._generate_summary(enriched, stats)
@@ -572,35 +577,90 @@ class LogAnalysisAgent(BaseAgent):
         return remediation_map.get(anomaly_type, "Investigate and respond per incident playbook.")
 
     @staticmethod
-    def _build_llm_prompt(findings: list[dict], stats: dict) -> str:
-        """Build the prompt sent to the LLM for enriched analysis."""
-        finding_summaries: list[dict] = []
+    def _build_llm_prompt(
+        findings: list[dict],
+        stats: dict,
+        events: "list[dict] | None" = None,
+    ) -> str:
+        """Build a structured production prompt for LLM-based log analysis."""
+        log_type = "security_log"
+        total_events = stats.get("total_events", 0)
+        unique_ips = stats.get("unique_ips", 0)
+        time_range_dict = stats.get("time_range") or {}
+        time_range = (
+            f"{time_range_dict.get('earliest', 'unknown')} — {time_range_dict.get('latest', 'unknown')}"
+            if time_range_dict else "unknown"
+        )
+
+        # Detected patterns summary from findings
+        detected_patterns: list[dict] = []
+        brute_force_events: list[dict] = []
+        priv_esc_events: list[dict] = []
+
         for f in findings:
-            finding_summaries.append(
-                {
-                    "finding_type": f.get("finding_type"),
-                    "title": f.get("title", "")[:120],
-                    "severity": f.get("severity"),
-                    "description": f.get("description", "")[:300],
-                    "mitre_techniques": f.get("mitre_techniques", []),
-                }
-            )
+            title = f.get("title", "")
+            anomaly_type = title.split("]")[0].strip("[") if "]" in title else "unknown"
+            pattern = {
+                "anomaly_type": anomaly_type,
+                "severity": f.get("severity"),
+                "description": f.get("description", "")[:200],
+                "mitre_techniques": f.get("mitre_techniques", []),
+                "evidence_count": len(f.get("evidence", [])),
+            }
+            detected_patterns.append(pattern)
+            if "BRUTE_FORCE" in title.upper():
+                brute_force_events.append(pattern)
+            elif "PRIVILEGE" in title.upper() or "PRIV_ESC" in title.upper():
+                priv_esc_events.append(pattern)
 
-        prompt_parts = [
-            "Analyze the following log analysis findings and enrich them with "
-            "additional MITRE ATT&CK context and recommended actions.\n",
-            f"Log statistics: {json.dumps(stats)}\n",
-            f"Detected anomalies ({len(findings)} findings):\n",
-            json.dumps(finding_summaries, indent=2),
+        # Sample events (first 20) — strip overly large fields
+        sample_events: list[dict] = []
+        if events:
+            for evt in events[:20]:
+                sample_events.append(
+                    {
+                        "timestamp": evt.get("timestamp"),
+                        "source_ip": evt.get("source_ip"),
+                        "destination_ip": evt.get("destination_ip"),
+                        "action": evt.get("action"),
+                        "user": evt.get("user"),
+                        "message": (evt.get("message") or "")[:150],
+                    }
+                )
+
+        finding_summaries: list[dict] = [
+            {
+                "finding_type": f.get("finding_type"),
+                "title": f.get("title", "")[:120],
+                "severity": f.get("severity"),
+                "description": f.get("description", "")[:300],
+                "mitre_techniques": f.get("mitre_techniques", []),
+            }
+            for f in findings
         ]
-        return "\n".join(prompt_parts)
 
-    @staticmethod
-    def _enrich_with_llm(findings: list[dict], llm_response: str) -> list[dict]:
+        return (
+            f"Analyze the following parsed security log events and identify anomalies.\n\n"
+            f"Log Type: {log_type}\n"
+            f"Total Events: {total_events}\n"
+            f"Time Range: {time_range}\n"
+            f"Unique Source IPs: {unique_ips}\n\n"
+            f"Detected Patterns:\n{json.dumps(detected_patterns, indent=2)}\n\n"
+            f"Sample Events (first 20):\n{json.dumps(sample_events, indent=2)}\n\n"
+            f"Brute Force Candidates: {json.dumps(brute_force_events, indent=2)}\n"
+            f"Privilege Escalation Candidates: {json.dumps(priv_esc_events, indent=2)}\n\n"
+            f"Rule-based findings ({len(findings)} total):\n"
+            f"{json.dumps(finding_summaries, indent=2)}\n\n"
+            f"Apply MITRE ATT&CK mapping and severity assessment from your system prompt.\n"
+            f"Return ONLY a valid JSON array of anomaly finding objects. No markdown."
+        )
+
+    @classmethod
+    def _enrich_with_llm(cls, findings: list[dict], llm_response: str) -> list[dict]:
         """Merge LLM analysis back into the rule-based findings."""
         try:
-            analyses = json.loads(llm_response)
-        except (json.JSONDecodeError, TypeError):
+            analyses = cls._parse_llm_json(llm_response)
+        except (json.JSONDecodeError, TypeError, ValueError):
             logger.warning("LLM response was not valid JSON; skipping enrichment.")
             return findings
 

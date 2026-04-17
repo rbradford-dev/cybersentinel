@@ -19,6 +19,25 @@ SUBAGENT_MODEL: str = os.getenv("SUBAGENT_MODEL", "claude-sonnet-4-6")
 MOCK_DELAY_MS: int = int(os.getenv("MOCK_DELAY_MS", "200"))
 
 # ---------------------------------------------------------------------------
+# LLM Retry and Token Budget Settings (Phase 4)
+# ---------------------------------------------------------------------------
+LLM_MAX_RETRIES: int = int(os.getenv("LLM_MAX_RETRIES", "3"))
+LLM_RETRY_BASE_DELAY: float = float(os.getenv("LLM_RETRY_BASE_DELAY", "2.0"))  # seconds
+
+# Per-agent token budgets (max_tokens per LLM call)
+ORCHESTRATOR_MAX_TOKENS: int = int(os.getenv("ORCHESTRATOR_MAX_TOKENS", "2048"))
+VULN_AGENT_MAX_TOKENS: int = int(os.getenv("VULN_AGENT_MAX_TOKENS", "1024"))
+THREAT_AGENT_MAX_TOKENS: int = int(os.getenv("THREAT_AGENT_MAX_TOKENS", "1024"))
+LOG_AGENT_MAX_TOKENS: int = int(os.getenv("LOG_AGENT_MAX_TOKENS", "2048"))
+REPORT_AGENT_MAX_TOKENS: int = int(os.getenv("REPORT_AGENT_MAX_TOKENS", "2048"))
+
+# ---------------------------------------------------------------------------
+# Cost Tracking (Phase 4)
+# ---------------------------------------------------------------------------
+COST_TRACKING_ENABLED: bool = True
+COST_WARNING_THRESHOLD_USD: float = float(os.getenv("COST_WARNING_THRESHOLD", "1.00"))
+
+# ---------------------------------------------------------------------------
 # NVD (National Vulnerability Database)
 # ---------------------------------------------------------------------------
 NVD_API_KEY: str = os.getenv("NVD_API_KEY", "")
@@ -98,7 +117,7 @@ LOG_ANOMALY_THRESHOLD: float = float(os.getenv("LOG_ANOMALY_THRESHOLD", "2.0"))
 # ---------------------------------------------------------------------------
 # Application
 # ---------------------------------------------------------------------------
-VERSION: str = "0.3.0"
+VERSION: str = "0.4.0"
 APP_NAME: str = "CyberSentinel"
 LOG_FILE: str = os.getenv("LOG_FILE", str(Path(__file__).parent / "cybersentinel.log"))
 LOG_LEVEL: str = os.getenv("LOG_LEVEL", "DEBUG")
@@ -111,4 +130,4 @@ DASHBOARD_HOST: str = os.getenv("DASHBOARD_HOST", "0.0.0.0")
 DASHBOARD_PORT: int = int(os.getenv("DASHBOARD_PORT", "8000"))
 DASHBOARD_RELOAD: bool = os.getenv("DASHBOARD_RELOAD", "false").lower() == "true"
 DASHBOARD_TITLE: str = "CyberSentinel"
-DASHBOARD_VERSION: str = "0.3.0"
+DASHBOARD_VERSION: str = "0.4.0"

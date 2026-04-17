@@ -16,7 +16,7 @@
 
 <!-- Query Form -->
 <div class="bg-cs-card border border-cs-border rounded-lg p-5">
-    <form onsubmit="event.preventDefault(); submitQuery(this);">
+    <form id="query-form" onsubmit="event.preventDefault(); runQuery();">
         <!-- Textarea -->
         <div class="mb-4">
             <label for="query-input" class="block text-xs font-semibold text-cs-muted uppercase tracking-wider mb-2">Query</label>
@@ -51,7 +51,11 @@ Examples:
             </div>
 
             <!-- Submit button -->
-            <button type="submit" class="run-button">&#9654; Run Query</button>
+            <button type="submit" id="run-btn" class="run-button">&#9654; Run Query</button>
+
+            <!-- Stop button (hidden initially) -->
+            <button type="button" id="stop-btn" class="hidden run-button" style="background:rgba(239,68,68,0.15); border-color:rgba(239,68,68,0.4); color:#ef4444;"
+                    onclick="stopQuery()">&#9632; Stop</button>
         </div>
     </form>
 
@@ -111,7 +115,7 @@ Examples:
     <p class="log-system">[SYSTEM] Ready &mdash; submit a query to begin analysis</p>
 </div>
 
-<!-- Results Section (hidden until analysis completes) -->
+<!-- Results Section (shown when analysis completes) -->
 <div id="query-results" class="hidden mt-6">
     <div class="section-header">Results</div>
     <div class="bg-cs-card border border-cs-border rounded-lg p-4">
@@ -126,14 +130,198 @@ Examples:
 
 {% block scripts %}
 <script>
-    /* Pre-fill the query textarea from a quick-action card */
-    function prefillQuery(text) {
-        var textarea = document.getElementById('query-input');
-        if (textarea) {
-            textarea.value = text;
-            textarea.focus();
-            textarea.setSelectionRange(text.length, text.length);
-        }
+/* =========================================================
+   Run Query Page — Phase 4 SSE wiring
+   ========================================================= */
+
+var _activeEventSource = null;
+
+/* Pre-fill the query textarea from a quick-action card */
+function prefillQuery(text) {
+    var textarea = document.getElementById('query-input');
+    if (textarea) {
+        textarea.value = text;
+        textarea.focus();
+        textarea.setSelectionRange(text.length, text.length);
     }
+}
+
+/* Append a line to the terminal output panel */
+function appendTerminal(text, color) {
+    var panel = document.getElementById('output-panel');
+    if (!panel) return;
+    var line = document.createElement('p');
+    var colorMap = {
+        'cyan':   'text-cs-blue',
+        'yellow': 'text-cs-yellow',
+        'green':  'text-cs-green',
+        'red':    'text-red-400',
+        'orange': 'text-cs-orange',
+        'white':  'text-cs-text',
+        'gray':   'text-cs-muted',
+    };
+    line.className = colorMap[color] || 'text-cs-text';
+    line.textContent = text;
+    panel.appendChild(line);
+    panel.scrollTop = panel.scrollHeight;
+}
+
+/* Set the status bar text */
+function setStatus(text) {
+    var el = document.getElementById('stream-status');
+    if (el) el.textContent = text;
+}
+
+/* Show/hide run vs stop button */
+function setRunning(running) {
+    var runBtn  = document.getElementById('run-btn');
+    var stopBtn = document.getElementById('stop-btn');
+    if (runBtn)  runBtn.classList.toggle('hidden', running);
+    if (stopBtn) stopBtn.classList.toggle('hidden', !running);
+}
+
+/* Stop the active SSE stream */
+function stopQuery() {
+    if (_activeEventSource) {
+        _activeEventSource.close();
+        _activeEventSource = null;
+    }
+    setRunning(false);
+    setStatus('Stopped');
+    appendTerminal('[SYSTEM] Stream stopped by user.', 'gray');
+}
+
+/* Main: submit query and connect SSE */
+function runQuery() {
+    var query = (document.getElementById('query-input').value || '').trim();
+    var queryType = document.getElementById('query-type').value || 'auto';
+
+    if (!query) {
+        setStatus('Please enter a query first.');
+        return;
+    }
+
+    // Close any existing stream
+    if (_activeEventSource) {
+        _activeEventSource.close();
+        _activeEventSource = null;
+    }
+
+    // Clear previous output
+    var panel = document.getElementById('output-panel');
+    if (panel) panel.innerHTML = '';
+    document.getElementById('query-results').classList.add('hidden');
+
+    setRunning(true);
+    setStatus('Connecting to analysis engine…');
+    appendTerminal('[SYSTEM] Starting analysis: ' + query, 'gray');
+
+    // Build SSE URL with query parameters
+    var params = new URLSearchParams({
+        query: query,
+        query_type: queryType
+    });
+    var url = '/stream/agent-output?' + params.toString();
+
+    var es = new EventSource(url);
+    _activeEventSource = es;
+
+    /* ---- Event handlers ---- */
+
+    es.addEventListener('routing', function(e) {
+        try {
+            var data = JSON.parse(e.data);
+            appendTerminal(
+                '[ROUTE] Intent: ' + (data.intent || 'unknown') +
+                ' → ' + (data.agents || []).join(', '),
+                'cyan'
+            );
+            setStatus('Routing to agents…');
+        } catch(err) {}
+    });
+
+    es.addEventListener('agent_start', function(e) {
+        try {
+            var data = JSON.parse(e.data);
+            appendTerminal(
+                '[START] ' + (data.agent || 'unknown') +
+                ' — ' + (data.task || 'Analyzing…'),
+                'yellow'
+            );
+            setStatus('Running: ' + (data.agent || 'agent') + '…');
+        } catch(err) {}
+    });
+
+    es.addEventListener('finding', function(e) {
+        try {
+            var data = JSON.parse(e.data);
+            var sev = (data.severity || 'unknown').toUpperCase();
+            var title = data.title || 'Finding detected';
+            var color = (data.severity === 'critical') ? 'red' : 'orange';
+            appendTerminal('[FIND] ' + sev + ' — ' + title, color);
+        } catch(err) {}
+    });
+
+    es.addEventListener('agent_complete', function(e) {
+        try {
+            var data = JSON.parse(e.data);
+            var cost = data.cost_usd > 0 ? ' | $' + data.cost_usd.toFixed(4) : '';
+            appendTerminal(
+                '[DONE] ' + (data.agent || 'agent') +
+                ': ' + (data.status || 'complete') +
+                ' | ' + (data.findings_count || 0) + ' findings' +
+                ' | ' + (data.execution_ms || 0) + 'ms' + cost,
+                'green'
+            );
+        } catch(err) {}
+    });
+
+    es.addEventListener('synthesis', function(e) {
+        try {
+            var data = JSON.parse(e.data);
+            appendTerminal(
+                '[SYNTH] Risk: ' + (data.risk_level || 'unknown') +
+                ' — ' + (data.summary || ''),
+                'cyan'
+            );
+        } catch(err) {}
+    });
+
+    es.addEventListener('done', function(e) {
+        try {
+            var data = JSON.parse(e.data);
+            var cost = (data.cost_usd > 0)
+                ? ' | Cost: $' + data.cost_usd.toFixed(4)
+                : '';
+            appendTerminal(
+                '[COMPLETE] ' + (data.total_findings || 0) + ' findings — ' +
+                (data.summary || 'Analysis complete.') + cost,
+                'green'
+            );
+        } catch(err) {}
+
+        es.close();
+        _activeEventSource = null;
+        setRunning(false);
+        setStatus('Analysis complete.');
+        document.getElementById('query-results').classList.remove('hidden');
+    });
+
+    es.addEventListener('heartbeat', function(e) {
+        // Keep-alive — no UI update needed
+    });
+
+    es.addEventListener('error', function(e) {
+        if (es.readyState === EventSource.CLOSED) {
+            // Normal close after 'done' event — ignore
+            return;
+        }
+        appendTerminal('[ERR] Connection error. Check server logs.', 'red');
+        es.close();
+        _activeEventSource = null;
+        setRunning(false);
+        setStatus('Connection error.');
+    });
+}
 </script>
 {% endblock %}

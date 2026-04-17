@@ -1,7 +1,10 @@
 """Server-Sent Events (SSE) router — real-time streaming endpoints.
 
-Phase 3 (mock mode): endpoints return realistic simulated agent events.
-Phase 4 will wire these to the live orchestrator pipeline.
+Phase 4: /stream/agent-output runs the real orchestrator and streams events
+from the session queue.  In mock mode (USE_MOCK_LLM=True) the same code path
+runs but each agent returns instantaneous mock responses.
+
+/stream/findings-feed polls the database every 5 s and pushes stat updates.
 """
 
 import asyncio
@@ -23,110 +26,85 @@ router = APIRouter(tags=["stream"])
 @router.get("/stream/agent-output")
 async def stream_agent_output(
     request: Request,
-    session_id: str = Query(default=None, description="Session ID for this query run"),
+    query: str = Query(default="", description="Security query to execute"),
+    query_type: str = Query(default="auto", description="Query type hint"),
+    session_id: str = Query(default="", description="Session ID (generated if absent)"),
 ):
     """Stream agent activity events in real time.
 
     The browser connects here after submitting a query on the Run Query page.
-    Each event corresponds to a stage in the agent execution pipeline:
-    routing -> agent_start -> finding(s) -> agent_complete -> synthesis -> done
+    The orchestrator is run as a background asyncio task; events are pushed
+    into a session queue and yielded to the SSE client as they arrive.
+
+    Event types (in order):
+        routing → agent_start → finding(s) → agent_complete → synthesis → done
+
+    When no query is supplied, a short mock sequence is emitted so the UI
+    has something meaningful to display on first load.
     """
+    from core.orchestrator import (
+        Orchestrator,
+        get_session_queue,
+        cleanup_session_queue,
+    )
+
+    sid = session_id.strip() or str(uuid.uuid4())
 
     async def event_generator():
-        sid = session_id or str(uuid.uuid4())
-
-        # Routing decision
-        yield {
-            "event": "routing",
-            "data": json.dumps({
-                "type": "routing",
-                "session_id": sid,
-                "intent": "cve_lookup",
-                "agents": ["vulnerability_agent"],
-                "confidence": 0.95,
-                "reasoning": "Detected CVE identifier pattern",
-            }),
-        }
-        await asyncio.sleep(0.5)
-
-        if await request.is_disconnected():
+        # If no query provided, emit a single informational event and exit
+        if not query.strip():
+            yield {
+                "event": "done",
+                "data": json.dumps({
+                    "type": "done",
+                    "session_id": sid,
+                    "total_findings": 0,
+                    "summary": "No query provided. Enter a query and click Run.",
+                    "status": "no_data",
+                }),
+            }
             return
 
-        # Agent start
-        yield {
-            "event": "agent_start",
-            "data": json.dumps({
-                "type": "agent_start",
-                "session_id": sid,
-                "agent": "vulnerability_agent",
-                "task": "Analyzing query...",
-            }),
-        }
-        await asyncio.sleep(1.5)
+        # Register the session queue BEFORE starting the orchestrator task
+        # so events emitted early in execution are not lost.
+        queue = get_session_queue(sid)
 
-        if await request.is_disconnected():
-            return
+        # Launch orchestrator in background — it will push events to the queue
+        orchestrator = Orchestrator()
+        orch_task = asyncio.create_task(
+            orchestrator.run(query.strip(), session_id=sid)
+        )
 
-        # Finding discovered
-        yield {
-            "event": "finding",
-            "data": json.dumps({
-                "type": "finding",
-                "session_id": sid,
-                "severity": "critical",
-                "title": "CVE-2024-38094: SharePoint RCE \u2014 Active Exploitation",
-                "cve_id": "CVE-2024-38094",
-                "cvss": 9.8,
-                "is_kev": True,
-            }),
-        }
-        await asyncio.sleep(0.8)
+        try:
+            # Stream events from the queue until the "done" event arrives
+            while True:
+                if await request.is_disconnected():
+                    orch_task.cancel()
+                    break
 
-        if await request.is_disconnected():
-            return
+                try:
+                    event = await asyncio.wait_for(queue.get(), timeout=30.0)
+                except asyncio.TimeoutError:
+                    # Send a heartbeat to keep the connection alive
+                    yield {"event": "heartbeat", "data": "{}"}
+                    continue
 
-        # Agent complete
-        yield {
-            "event": "agent_complete",
-            "data": json.dumps({
-                "type": "agent_complete",
-                "session_id": sid,
-                "agent": "vulnerability_agent",
-                "status": "success",
-                "findings_count": 1,
-                "execution_ms": 1842,
-            }),
-        }
-        await asyncio.sleep(0.5)
+                yield {
+                    "event": event.get("type", "message"),
+                    "data": json.dumps(event),
+                }
 
-        if await request.is_disconnected():
-            return
+                if event.get("type") == "done":
+                    break
 
-        # Synthesis
-        yield {
-            "event": "synthesis",
-            "data": json.dumps({
-                "type": "synthesis",
-                "session_id": sid,
-                "summary": "Critical RCE vulnerability actively exploited. Immediate patching required.",
-                "risk_level": "critical",
-            }),
-        }
-        await asyncio.sleep(0.3)
-
-        if await request.is_disconnected():
-            return
-
-        # Done
-        yield {
-            "event": "done",
-            "data": json.dumps({
-                "type": "done",
-                "session_id": sid,
-                "total_findings": 1,
-                "summary": "Analysis complete. 1 critical finding requires immediate attention.",
-            }),
-        }
+        finally:
+            cleanup_session_queue(sid)
+            # Ensure the orchestrator task completes (or is cancelled)
+            if not orch_task.done():
+                try:
+                    await asyncio.wait_for(orch_task, timeout=5.0)
+                except (asyncio.TimeoutError, asyncio.CancelledError):
+                    pass
 
     return EventSourceResponse(event_generator(), media_type="text/event-stream")
 
@@ -153,27 +131,30 @@ async def stream_findings_feed(request: Request):
             if await request.is_disconnected():
                 return
 
-            conn = get_connection()
-            row = conn.execute("SELECT COUNT(*) as cnt FROM findings").fetchone()
-            count = row["cnt"] if row else 0
+            try:
+                conn = get_connection()
+                row = conn.execute("SELECT COUNT(*) as cnt FROM findings").fetchone()
+                count = row["cnt"] if row else 0
 
-            if count != last_count:
-                last_count = count
+                if count != last_count:
+                    last_count = count
 
-                # Severity breakdown
-                sev_rows = conn.execute(
-                    "SELECT severity, COUNT(*) as cnt FROM findings GROUP BY severity"
-                ).fetchall()
-                severity = {r["severity"]: r["cnt"] for r in sev_rows}
+                    # Severity breakdown
+                    sev_rows = conn.execute(
+                        "SELECT severity, COUNT(*) as cnt FROM findings GROUP BY severity"
+                    ).fetchall()
+                    severity = {r["severity"]: r["cnt"] for r in sev_rows}
 
-                yield {
-                    "event": "stats_update",
-                    "data": json.dumps({
-                        "type": "stats_update",
-                        "total_findings": count,
-                        "severity": severity,
-                    }),
-                }
+                    yield {
+                        "event": "stats_update",
+                        "data": json.dumps({
+                            "type": "stats_update",
+                            "total_findings": count,
+                            "severity": severity,
+                        }),
+                    }
+            except Exception:
+                pass  # DB may be briefly locked; skip and retry on next cycle
 
             await asyncio.sleep(5)
 

@@ -3,11 +3,12 @@
 import asyncio
 import json
 import logging
+import time
 from typing import Optional, Union
 
 import config
 from core.agent_result import AgentResult
-from core.base_agent import BaseAgent
+from core.base_agent import BaseAgent, _calculate_cost
 from core.context_manager import SessionContext
 from core.mock_llm import MockLLM
 from core.router import RoutingDecision, classify, classify_structured
@@ -34,6 +35,31 @@ State "insufficient data" rather than speculating. Never fabricate CVE IDs, IP a
 or threat actor names.\
 """
 
+
+# ---------------------------------------------------------------------------
+# Module-level SSE session queues — one asyncio.Queue per active session.
+# The SSE stream endpoint creates a queue before launching the orchestrator;
+# the orchestrator pushes events into it; the SSE generator reads and yields.
+# ---------------------------------------------------------------------------
+
+_session_queues: dict[str, asyncio.Queue] = {}
+
+
+def get_session_queue(session_id: str) -> asyncio.Queue:
+    """Return (creating if absent) the event queue for *session_id*."""
+    if session_id not in _session_queues:
+        _session_queues[session_id] = asyncio.Queue()
+    return _session_queues[session_id]
+
+
+def cleanup_session_queue(session_id: str) -> None:
+    """Remove the queue for *session_id* after the SSE stream is closed."""
+    _session_queues.pop(session_id, None)
+
+
+# ---------------------------------------------------------------------------
+# Orchestrator
+# ---------------------------------------------------------------------------
 
 class Orchestrator:
     """Master orchestrator that routes input, dispatches agents, and synthesizes results."""
@@ -64,6 +90,17 @@ class Orchestrator:
         return self._agents.get(name)
 
     # ------------------------------------------------------------------
+    # SSE event emission
+    # ------------------------------------------------------------------
+
+    async def _emit_event(
+        self, session_id: Optional[str], event_type: str, data: dict
+    ) -> None:
+        """Push an event into the session's SSE queue (no-op if no queue)."""
+        if session_id and session_id in _session_queues:
+            await _session_queues[session_id].put({"type": event_type, **data})
+
+    # ------------------------------------------------------------------
     # LLM helpers
     # ------------------------------------------------------------------
 
@@ -80,19 +117,53 @@ class Orchestrator:
         if self._client is None:
             self._client = anthropic.AsyncAnthropic(api_key=config.ANTHROPIC_API_KEY)
 
-        response = await self._client.messages.create(
-            model=self.model,
-            max_tokens=4096,
-            system=ORCHESTRATOR_SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        return response.content[0].text
+        for attempt in range(config.LLM_MAX_RETRIES):
+            try:
+                response = await self._client.messages.create(
+                    model=self.model,
+                    max_tokens=config.ORCHESTRATOR_MAX_TOKENS,
+                    system=ORCHESTRATOR_SYSTEM_PROMPT,
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=0.1,
+                )
+                usage = response.usage
+                cost = _calculate_cost(self.model, usage.input_tokens, usage.output_tokens)
+                logger.warning(
+                    "Orchestrator LLM call: in=%d out=%d cost=$%.4f",
+                    usage.input_tokens,
+                    usage.output_tokens,
+                    cost,
+                )
+                return response.content[0].text
+            except anthropic.RateLimitError:
+                wait = config.LLM_RETRY_BASE_DELAY * (2 ** attempt)
+                logger.warning("Orchestrator rate limit, waiting %.1fs", wait)
+                await asyncio.sleep(wait)
+            except anthropic.APIError as exc:
+                logger.error("Orchestrator API error: %s", exc)
+                if attempt == config.LLM_MAX_RETRIES - 1:
+                    return json.dumps({"synthesis": "LLM synthesis unavailable.", "error": str(exc)})
+                await asyncio.sleep(config.LLM_RETRY_BASE_DELAY)
+
+        return json.dumps({"synthesis": "Max retries exceeded."})
 
     # ------------------------------------------------------------------
     # Main entry points
     # ------------------------------------------------------------------
 
-    async def handle(self, user_input: Union[str, dict]) -> AgentResult:
+    async def run(self, query: str, session_id: Optional[str] = None) -> AgentResult:
+        """Convenience entry point that accepts a plain string query.
+
+        Wraps ``handle()`` and threads ``session_id`` through for SSE streaming.
+        This is the primary entry point used by the dashboard's SSE stream endpoint.
+        """
+        return await self.handle(query, session_id=session_id)
+
+    async def handle(
+        self,
+        user_input: Union[str, dict],
+        session_id: Optional[str] = None,
+    ) -> AgentResult:
         """Accept natural language or structured input, route, dispatch, synthesize."""
         # Lazy import to avoid circular import at module level
         from output.terminal import TerminalOutput as term
@@ -112,19 +183,27 @@ class Orchestrator:
         ctx.add_user_message(ctx.original_input)
 
         logger.info(
-            "Orchestrator received input | intent=%s agents=%s",
+            "Orchestrator received input | intent=%s agents=%s session=%s",
             routing.intent,
             routing.target_agents,
+            session_id,
         )
 
-        # Step 2 — Print routing decision
+        # Step 2 — Print routing decision + emit SSE routing event
         term.print_routing_decision(routing)
+        await self._emit_event(session_id, "routing", {
+            "session_id": session_id,
+            "intent": routing.intent,
+            "agents": routing.target_agents,
+            "confidence": routing.confidence,
+            "reasoning": routing.reasoning,
+        })
 
         # Step 3 — Build tasks for each target agent
         task = self._build_task(routing, user_input)
 
-        # Step 4 — Dispatch agents (parallel if multiple)
-        results = await self._dispatch(routing.target_agents, task, term)
+        # Step 4 — Dispatch agents (parallel if multiple) with SSE emission
+        results = await self._dispatch(routing.target_agents, task, term, session_id)
 
         # Step 5 — Merge results
         merged = self._merge_results(results)
@@ -136,7 +215,14 @@ class Orchestrator:
         synthesis_raw = await self._call_llm(synthesis_prompt)
         synthesis = self._parse_synthesis(synthesis_raw)
 
-        merged.summary = synthesis.get("synthesis", merged.summary)
+        merged.summary = synthesis.get("synthesis") or merged.summary
+
+        # Emit synthesis SSE event
+        await self._emit_event(session_id, "synthesis", {
+            "session_id": session_id,
+            "summary": merged.summary,
+            "risk_level": synthesis.get("risk_level", "unknown"),
+        })
 
         # Step 7 — Save to database
         await self._save_findings(merged, ctx)
@@ -150,6 +236,18 @@ class Orchestrator:
             merged.critical_count(),
             merged.high_count(),
         )
+
+        # Emit done SSE event
+        total_cost = merged.tokens_used_detail.get("cost_usd", 0.0)
+        await self._emit_event(session_id, "done", {
+            "session_id": session_id,
+            "total_findings": merged.finding_count(),
+            "critical_findings": merged.critical_count(),
+            "high_findings": merged.high_count(),
+            "summary": merged.summary,
+            "status": merged.status,
+            "cost_usd": round(total_cost, 6),
+        })
 
         return merged
 
@@ -213,9 +311,13 @@ class Orchestrator:
         return task
 
     async def _dispatch(
-        self, agent_names: list[str], task: dict, term: object
+        self,
+        agent_names: list[str],
+        task: dict,
+        term: object,
+        session_id: Optional[str] = None,
     ) -> list[AgentResult]:
-        """Dispatch to one or more agents in parallel."""
+        """Dispatch to one or more agents in parallel, emitting SSE events."""
         from output.terminal import TerminalOutput
 
         coros = []
@@ -225,40 +327,79 @@ class Orchestrator:
                 logger.warning("Agent '%s' not registered — skipping", name)
                 coros.append(self._make_not_implemented_result(name))
             else:
-                TerminalOutput.print_agent_start(agent.name, str(task.get("query", task.get("cve_id", ""))))
+                task_label = str(task.get("query", task.get("cve_id", task.get("ip", ""))))
+                TerminalOutput.print_agent_start(agent.name, task_label)
+                # Emit SSE agent_start
+                await self._emit_event(session_id, "agent_start", {
+                    "session_id": session_id,
+                    "agent": agent.name,
+                    "task": task_label or "Analyzing…",
+                })
                 coros.append(agent.execute(task))
 
-        results = await asyncio.gather(*coros, return_exceptions=True)
+        start_times: dict[str, float] = {name: time.perf_counter() for name in agent_names}
+        results_raw = await asyncio.gather(*coros, return_exceptions=True)
 
-        # Wrap any unexpected exceptions
+        # Wrap any unexpected exceptions; emit agent_complete / per-finding events
         safe_results: list[AgentResult] = []
-        for idx, r in enumerate(results):
+        for idx, r in enumerate(results_raw):
+            name = agent_names[idx] if idx < len(agent_names) else "unknown"
+            elapsed_ms = int((time.perf_counter() - start_times.get(name, 0)) * 1000)
+
             if isinstance(r, AgentResult):
                 from output.terminal import TerminalOutput as _t
-
                 _t.print_agent_complete(r)
+
+                # Emit a finding event for each finding
+                for finding in r.findings:
+                    await self._emit_event(session_id, "finding", {
+                        "session_id": session_id,
+                        "severity": finding.get("severity", "unknown"),
+                        "title": finding.get("title", ""),
+                        "cve_id": finding.get("cve_id"),
+                        "cvss": finding.get("cvss_score"),
+                        "is_kev": finding.get("is_kev", False),
+                        "finding_type": finding.get("finding_type", ""),
+                    })
+
+                # Emit agent_complete
+                await self._emit_event(session_id, "agent_complete", {
+                    "session_id": session_id,
+                    "agent": r.agent_name,
+                    "status": r.status,
+                    "findings_count": r.finding_count(),
+                    "execution_ms": r.execution_time_ms or elapsed_ms,
+                    "cost_usd": r.tokens_used_detail.get("cost_usd", 0.0),
+                })
+
                 safe_results.append(r)
+
             elif isinstance(r, Exception):
-                name = agent_names[idx] if idx < len(agent_names) else "unknown"
                 logger.error("Agent '%s' raised exception: %s", name, r)
-                safe_results.append(
-                    AgentResult(
-                        agent_name=name,
-                        status="error",
-                        error=str(r),
-                        summary=f"Agent {name} encountered an error: {r}",
-                    )
+                err_result = AgentResult(
+                    agent_name=name,
+                    status="error",
+                    error=str(r),
+                    summary=f"Agent {name} encountered an error: {r}",
                 )
+                await self._emit_event(session_id, "agent_complete", {
+                    "session_id": session_id,
+                    "agent": name,
+                    "status": "error",
+                    "findings_count": 0,
+                    "execution_ms": elapsed_ms,
+                    "error": str(r),
+                })
+                safe_results.append(err_result)
             else:
-                name = agent_names[idx] if idx < len(agent_names) else "unknown"
-                safe_results.append(
-                    AgentResult(
-                        agent_name=name,
-                        status="error",
-                        error=str(r),
-                        summary=f"Agent {name} returned unexpected type.",
-                    )
+                err_result = AgentResult(
+                    agent_name=name,
+                    status="error",
+                    error=str(r),
+                    summary=f"Agent {name} returned unexpected type.",
                 )
+                safe_results.append(err_result)
+
         return safe_results
 
     @staticmethod
@@ -267,8 +408,8 @@ class Orchestrator:
         return AgentResult(
             agent_name=agent_name,
             status="error",
-            error=f"Agent '{agent_name}' is not yet implemented (Phase 2).",
-            summary=f"Agent '{agent_name}' is planned for Phase 2.",
+            error=f"Agent '{agent_name}' is not yet implemented.",
+            summary=f"Agent '{agent_name}' is not yet implemented.",
         )
 
     @staticmethod
@@ -301,11 +442,38 @@ class Orchestrator:
 
     @staticmethod
     def _parse_synthesis(raw: str) -> dict:
-        """Safely parse the LLM synthesis response."""
+        """Safely parse the LLM synthesis response.
+
+        Strips markdown code fences (```json ... ```) before parsing so the
+        orchestrator summary panel never displays raw JSON.  After parsing,
+        coerces the ``synthesis`` value to a plain string so terminal.py
+        receives something it can render directly.
+        """
+        import re
+
+        text = raw.strip() if raw else ""
+
+        # Strip opening fence (```json or plain ```)
+        if text.startswith("```"):
+            text = re.sub(r"^```(?:json)?\n?", "", text)
+            text = re.sub(r"\n?```$", "", text.rstrip())
+
         try:
-            return json.loads(raw)
+            parsed = json.loads(text)
         except (json.JSONDecodeError, TypeError):
-            return {"synthesis": raw}
+            # Fall back to using the cleaned text as the summary
+            return {"synthesis": text}
+
+        if not isinstance(parsed, dict):
+            return {"synthesis": str(parsed)}
+
+        # Ensure `synthesis` is a printable string, not a nested structure
+        synthesis_val = parsed.get("synthesis", "")
+        if not isinstance(synthesis_val, str):
+            synthesis_val = json.dumps(synthesis_val)
+        parsed["synthesis"] = synthesis_val
+
+        return parsed
 
     async def _save_findings(self, result: AgentResult, ctx: SessionContext) -> None:
         """Persist findings and session info to SQLite."""

@@ -18,6 +18,7 @@ class AgentResult:
     summary: str = ""
     error: Optional[str] = None
     raw_data: Optional[dict] = None
+    tokens_used_detail: dict = field(default_factory=dict)
 
     def finding_count(self) -> int:
         """Return the number of findings."""
@@ -37,6 +38,17 @@ class AgentResult:
 
     def merge(self, other: "AgentResult") -> "AgentResult":
         """Merge another AgentResult into this one."""
+        # Merge token usage detail: sum up input/output/cost across agents
+        merged_detail: dict = {}
+        for key in ("input_tokens", "output_tokens"):
+            merged_detail[key] = (
+                self.tokens_used_detail.get(key, 0)
+                + other.tokens_used_detail.get(key, 0)
+            )
+        merged_detail["cost_usd"] = (
+            self.tokens_used_detail.get("cost_usd", 0.0)
+            + other.tokens_used_detail.get("cost_usd", 0.0)
+        )
         return AgentResult(
             agent_name="orchestrator",
             status=self._merge_status(self.status, other.status),
@@ -48,6 +60,7 @@ class AgentResult:
             summary=f"{self.summary} | {other.summary}",
             error=self.error or other.error,
             raw_data=None,
+            tokens_used_detail=merged_detail,
         )
 
     @staticmethod

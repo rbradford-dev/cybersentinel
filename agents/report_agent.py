@@ -72,7 +72,12 @@ class ReportAgent(BaseAgent):
         prompt = self._build_report_prompt(report_type, findings, cve_findings)
 
         # 6. Call the LLM
-        llm_response = await self._call_llm(prompt, REPORT_SYSTEM_PROMPT)
+        llm_response = await self._call_llm(
+            prompt,
+            system_prompt=REPORT_SYSTEM_PROMPT,
+            max_tokens=config.REPORT_AGENT_MAX_TOKENS,
+            temperature=0.3,  # slightly higher for narrative quality
+        )
 
         # 7. Parse the LLM response into a structured report
         report_data = self._parse_report(llm_response)
@@ -119,36 +124,7 @@ class ReportAgent(BaseAgent):
         findings: list[dict],
         cve_findings: list[dict],
     ) -> str:
-        """Build the LLM prompt containing findings data for report generation."""
-        # Summarize general findings
-        findings_summary: list[dict] = []
-        for f in findings:
-            findings_summary.append(
-                {
-                    "finding_type": f.get("finding_type", ""),
-                    "title": f.get("title", "")[:150],
-                    "severity": f.get("severity", ""),
-                    "confidence": f.get("confidence"),
-                    "status": f.get("status", ""),
-                    "agent_name": f.get("agent_name", ""),
-                }
-            )
-
-        # Summarize CVE findings
-        cve_summary: list[dict] = []
-        for c in cve_findings:
-            cve_summary.append(
-                {
-                    "cve_id": c.get("cve_id", ""),
-                    "cvss_score": c.get("cvss_score"),
-                    "severity": c.get("severity", ""),
-                    "is_kev": bool(c.get("is_kev")),
-                    "kev_due_date": c.get("kev_due_date"),
-                    "remediation": c.get("remediation", ""),
-                    "status": c.get("status", ""),
-                }
-            )
-
+        """Build a structured production prompt for security report generation."""
         # Severity breakdown
         severity_counts: dict[str, int] = {}
         for f in findings:
@@ -157,75 +133,97 @@ class ReportAgent(BaseAgent):
 
         kev_count = sum(1 for c in cve_findings if c.get("is_kev"))
 
-        prompt_parts = [
-            f"Generate a {report_type} security report from the following findings data.",
-            "",
-            f"Total findings: {len(findings)}",
-            f"CVE findings: {len(cve_findings)}",
-            f"Actively exploited (CISA KEV): {kev_count}",
-            f"Severity breakdown: {json.dumps(severity_counts)}",
-            "",
-            "=== FINDINGS ===",
-            json.dumps(findings_summary, indent=2),
-            "",
-            "=== CVE FINDINGS ===",
-            json.dumps(cve_summary, indent=2),
-        ]
+        # Collect agents used and data sources
+        agents_used: list[str] = sorted(
+            {f.get("agent_name", "") for f in findings if f.get("agent_name")}
+        )
+        data_sources = ["sqlite"]
+        if cve_findings:
+            data_sources += ["NVD", "CISA_KEV"]
+
+        # Top findings (most critical/high)
+        severity_order = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4, "unknown": 5}
+        sorted_findings = sorted(
+            findings,
+            key=lambda f: severity_order.get(f.get("severity", "unknown"), 5),
+        )
+        top_findings: list[dict] = []
+        for f in sorted_findings[:10]:
+            top_findings.append(
+                {
+                    "finding_type": f.get("finding_type", ""),
+                    "title": f.get("title", "")[:150],
+                    "severity": f.get("severity", ""),
+                    "confidence": f.get("confidence"),
+                    "cve_id": f.get("cve_id"),
+                    "is_kev": f.get("is_kev", False),
+                    "agent_name": f.get("agent_name", ""),
+                }
+            )
+
+        # Determine time period
+        from datetime import datetime, timezone
+        now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        time_period = f"as of {now_str}"
+
+        prompt = (
+            f"Generate a {report_type} security report from the following findings.\n\n"
+            f"Report Period: {time_period}\n"
+            f"Total Findings: {len(findings)}\n"
+            f"CVE Findings: {len(cve_findings)}\n"
+            f"Actively Exploited (CISA KEV): {kev_count}\n"
+            f"Finding Breakdown: {json.dumps(severity_counts, indent=2)}\n\n"
+            f"Top Findings:\n{json.dumps(top_findings, indent=2)}\n\n"
+            f"Data Sources Used: {', '.join(data_sources)}\n"
+            f"Agents Used: {', '.join(agents_used) or 'unknown'}\n\n"
+        )
 
         if report_type == "compliance":
-            prompt_parts.extend(
-                [
-                    "",
-                    "=== COMPLIANCE CONTEXT ===",
-                    "This is a HIPAA-regulated healthcare environment.",
-                    "Highlight any findings that may affect Protected Health Information (PHI).",
-                    "Note relevant HIPAA Security Rule safeguards (Administrative, Physical, Technical).",
-                    "Include regulatory deadlines and required remediation timelines.",
-                ]
+            prompt += (
+                "COMPLIANCE CONTEXT: HIPAA-regulated healthcare environment.\n"
+                "Highlight findings affecting Protected Health Information (PHI).\n"
+                "Note HIPAA Security Rule safeguards (Administrative, Physical, Technical).\n"
+                "Include regulatory deadlines and required remediation timelines.\n\n"
             )
         elif report_type == "executive":
-            prompt_parts.extend(
-                [
-                    "",
-                    "=== EXECUTIVE CONTEXT ===",
-                    "Target audience: CISO and senior leadership.",
-                    "Focus on business risk, potential financial impact, and strategic recommendations.",
-                    "Minimize technical jargon. Use risk ratings (Critical/High/Medium/Low).",
-                ]
+            prompt += (
+                "EXECUTIVE CONTEXT: Target audience is CISO and senior leadership.\n"
+                "Focus on business risk, potential financial impact, and strategic recommendations.\n"
+                "Minimize technical jargon. Use risk ratings (Critical/High/Medium/Low).\n\n"
             )
         elif report_type == "technical":
-            prompt_parts.extend(
-                [
-                    "",
-                    "=== TECHNICAL CONTEXT ===",
-                    "Target audience: SOC analysts and security engineers.",
-                    "Include full CVE details, CVSS vectors, IOC data, and MITRE ATT&CK technique IDs.",
-                    "Provide step-by-step remediation procedures.",
-                ]
+            prompt += (
+                "TECHNICAL CONTEXT: Target audience is SOC analysts and security engineers.\n"
+                "Include CVE details, CVSS vectors, IOC data, and MITRE ATT&CK technique IDs.\n"
+                "Provide step-by-step remediation procedures.\n\n"
             )
 
-        return "\n".join(prompt_parts)
+        prompt += (
+            "Generate the report following your system prompt structure.\n"
+            "Return ONLY a valid JSON report object. No markdown. No preamble."
+        )
+        return prompt
 
     # ------------------------------------------------------------------
     # Response parsing
     # ------------------------------------------------------------------
 
-    @staticmethod
-    def _parse_report(llm_response: str) -> dict:
+    @classmethod
+    def _parse_report(cls, llm_response: str) -> dict:
         """Parse the LLM response into a structured report dict.
 
-        Attempts to extract JSON from the response. Falls back to a minimal
-        structure wrapping the raw text if parsing fails.
+        Uses ``_parse_llm_json`` (which strips markdown fences) then falls back
+        to brace-extraction and finally a minimal raw-text wrapper.
         """
-        # Try direct JSON parse first
+        # 1. Try _parse_llm_json (handles markdown fences)
         try:
-            report = json.loads(llm_response)
-            if isinstance(report, dict):
-                return report
-        except (json.JSONDecodeError, TypeError):
+            result = cls._parse_llm_json(llm_response)
+            if isinstance(result, dict):
+                return result
+        except (json.JSONDecodeError, TypeError, ValueError):
             pass
 
-        # Try to find JSON embedded in the response (e.g., wrapped in markdown fences)
+        # 2. Try to find JSON object embedded in the response
         text = llm_response.strip()
         json_start = text.find("{")
         json_end = text.rfind("}")
@@ -237,7 +235,7 @@ class ReportAgent(BaseAgent):
             except (json.JSONDecodeError, TypeError):
                 pass
 
-        # Fallback: wrap the raw text in a minimal report structure
+        # 3. Fallback: minimal structure wrapping the raw text
         logger.warning("Could not parse LLM response as JSON; using raw text fallback.")
         return {
             "report_title": "Security Report",
@@ -247,6 +245,7 @@ class ReportAgent(BaseAgent):
             "key_findings": [],
             "recommendations": [],
             "sections": [],
+            "compliance_notes": [],
             "raw_llm_output": text,
         }
 

@@ -10,7 +10,10 @@
       "Bash(python -c \"import ast; ast.parse\\(open\\('output/dashboard/routes/stream.py'\\).read\\(\\)\\); print\\('Syntax OK'\\)\")",
       "Bash(python -c \"import py_compile; py_compile.compile\\('output/dashboard/routes/pages.py', doraise=True\\); print\\('Syntax OK'\\)\")",
       "Bash(python -m pytest tests/test_dashboard_pages.py tests/test_dashboard_api.py -v --tb=short)",
-      "Bash(timeout 8 python -c ':*)"
+      "Bash(timeout 8 python -c ':*)",
+      "Bash(python main.py cve CVE-2024-38094)",
+      "Bash(python -m pytest tests/test_orchestrator.py tests/test_live_llm.py -v --tb=short)",
+      "Bash(python -m pytest tests/test_orchestrator.py -v --tb=short)"
     ]
   }
 }

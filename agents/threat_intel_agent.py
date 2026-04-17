@@ -148,7 +148,12 @@ class ThreatIntelAgent(BaseAgent):
 
         # ---- Call LLM for enriched analysis ----
         llm_prompt = self._build_llm_prompt(findings)
-        llm_response = await self._call_llm(llm_prompt, THREAT_INTEL_SYSTEM_PROMPT)
+        llm_response = await self._call_llm(
+            llm_prompt,
+            system_prompt=THREAT_INTEL_SYSTEM_PROMPT,
+            max_tokens=config.THREAT_AGENT_MAX_TOKENS,
+            temperature=0.1,
+        )
         enriched = self._enrich_with_llm(findings, llm_response)
 
         summary = self._generate_summary(enriched)
@@ -410,31 +415,68 @@ class ThreatIntelAgent(BaseAgent):
 
     @staticmethod
     def _build_llm_prompt(findings: list[dict]) -> str:
-        """Build the prompt for LLM-based threat assessment."""
-        summary_data = []
+        """Build a structured production prompt for LLM-based IOC threat assessment."""
+        # Build per-IOC structured context
+        ioc_blocks: list[str] = []
         for f in findings:
-            summary_data.append(
-                {
-                    "ioc": f.get("affected_asset"),
-                    "finding_type": f.get("finding_type"),
-                    "severity": f.get("severity"),
-                    "confidence": f.get("confidence"),
-                    "title": f.get("title", "")[:120],
-                    "evidence": f.get("evidence", [])[:6],
-                }
+            ioc_value = f.get("affected_asset", "unknown")
+            severity = f.get("severity", "unknown")
+            evidence = f.get("evidence", [])
+
+            # Extract structured fields from evidence strings
+            abuse_score = next(
+                (e for e in evidence if "AbuseIPDB confidence" in e), "N/A"
             )
+            abuse_reports = next(
+                (e for e in evidence if "AbuseIPDB total reports" in e), "N/A"
+            )
+            abuse_categories = next(
+                (e for e in evidence if "Abuse categories:" in e), "N/A"
+            )
+            pulse_count = next(
+                (e for e in evidence if "OTX pulse count" in e), "N/A"
+            )
+            country_isp = next(
+                (e for e in evidence if "Country:" in e), "N/A"
+            )
+            malware_evidence = [e for e in evidence if "Malware" in e or "malware" in e]
+            pulse_names = [e for e in evidence if "OTX pulse:" in e][:3]
+            threat_actors: list[str] = []  # future: extract from OTX
+
+            # Determine IOC type
+            ioc_type = "ip" if "." in ioc_value and ioc_value.replace(".", "").isdigit() else "domain"
+
+            block = (
+                f"---\n"
+                f"IOC Type: {ioc_type}\n"
+                f"IOC Value: {ioc_value}\n"
+                f"Current Severity: {severity}\n"
+                f"{abuse_score}\n"
+                f"{abuse_reports}\n"
+                f"{abuse_categories}\n"
+                f"{pulse_count}\n"
+                f"OTX Malware Families: {'; '.join(malware_evidence) or 'None'}\n"
+                f"OTX Threat Actor Associations: {'; '.join(threat_actors) or 'None'}\n"
+                f"OTX Notable Pulses: {'; '.join(pulse_names) or 'None'}\n"
+                f"{country_isp}\n"
+            )
+            ioc_blocks.append(block)
+
+        ioc_section = "\n".join(ioc_blocks)
         return (
-            "Analyze these IOC enrichment results and provide a structured "
-            "threat assessment for each indicator:\n\n"
-            + json.dumps(summary_data, indent=2)
+            f"Analyze the following IOC enrichment data and produce a threat assessment.\n\n"
+            f"{ioc_section}\n"
+            f"---\n\n"
+            f"Apply the verdict and confidence rules from your system prompt.\n"
+            f"Return ONLY a valid JSON array of IOC finding objects. No markdown. No preamble."
         )
 
-    @staticmethod
-    def _enrich_with_llm(findings: list[dict], llm_response: str) -> list[dict]:
+    @classmethod
+    def _enrich_with_llm(cls, findings: list[dict], llm_response: str) -> list[dict]:
         """Merge LLM analysis back into findings where possible."""
         try:
-            analyses = json.loads(llm_response)
-        except (json.JSONDecodeError, TypeError):
+            analyses = cls._parse_llm_json(llm_response)
+        except (json.JSONDecodeError, TypeError, ValueError):
             return findings
 
         if isinstance(analyses, list):

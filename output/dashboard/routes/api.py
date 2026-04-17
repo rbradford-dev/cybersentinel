@@ -265,6 +265,35 @@ async def submit_query(body: QueryRequest):
 
 
 # ---------------------------------------------------------------------------
+# GET /costs — token usage and cost summary
+# ---------------------------------------------------------------------------
+
+
+@router.get("/costs")
+async def get_costs():
+    """Return token usage and API cost summary from the in-memory cost tracker.
+
+    In mock mode all costs are $0.00 (no real API calls are made).
+    """
+    from core.cost_tracker import cost_tracker
+
+    totals = cost_tracker.get_all_sessions_total()
+    return {
+        "total_cost_usd": totals["total_cost_usd"],
+        "total_input_tokens": totals["total_input_tokens"],
+        "total_output_tokens": totals["total_output_tokens"],
+        "cost_by_agent": totals["cost_by_agent"],
+        "session_count": totals["session_count"],
+        "mock_mode": config.USE_MOCK_LLM,
+        "formatted_cost": (
+            f"${totals['total_cost_usd']:.4f}"
+            if totals["total_cost_usd"] > 0
+            else "$0.0000"
+        ),
+    }
+
+
+# ---------------------------------------------------------------------------
 # GET /integrations/status — configured API keys
 # ---------------------------------------------------------------------------
 

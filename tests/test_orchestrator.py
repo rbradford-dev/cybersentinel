@@ -3,6 +3,7 @@
 import pytest
 from unittest.mock import AsyncMock, patch, MagicMock
 
+import config
 from core.orchestrator import Orchestrator
 from core.router import classify, classify_structured, RoutingDecision
 from core.agent_result import AgentResult
@@ -78,6 +79,11 @@ class TestRouter:
 
 class TestOrchestrator:
     """Tests for orchestrator dispatch and result handling."""
+
+    @pytest.fixture(autouse=True)
+    def force_mock_llm(self, monkeypatch):
+        """Ensure all orchestrator tests run in mock mode regardless of .env state."""
+        monkeypatch.setattr(config, "USE_MOCK_LLM", True)
 
     @pytest.mark.asyncio
     async def test_structured_input_dispatch(self):

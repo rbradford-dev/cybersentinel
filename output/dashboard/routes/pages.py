@@ -197,6 +197,24 @@ async def agents(request: Request):
         },
     }
 
+    # Cost / token usage summary
+    from core.cost_tracker import cost_tracker
+
+    cost_data = cost_tracker.get_all_sessions_total()
+    cost_context = {
+        "total_cost_usd": cost_data["total_cost_usd"],
+        "total_input_tokens": cost_data["total_input_tokens"],
+        "total_output_tokens": cost_data["total_output_tokens"],
+        "cost_by_agent": cost_data["cost_by_agent"],
+        "session_count": cost_data["session_count"],
+        "mock_mode": config.USE_MOCK_LLM,
+        "formatted_cost": (
+            f"${cost_data['total_cost_usd']:.4f}"
+            if cost_data["total_cost_usd"] > 0
+            else "$0.0000"
+        ),
+    }
+
     return templates.TemplateResponse(
         request=request,
         name="agents.html",
@@ -206,5 +224,6 @@ async def agents(request: Request):
             "integrations": integrations,
             "config": config,
             "active_page": "agents",
+            "cost": cost_context,
         },
     )
