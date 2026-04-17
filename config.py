@@ -29,7 +29,7 @@ ORCHESTRATOR_MAX_TOKENS: int = int(os.getenv("ORCHESTRATOR_MAX_TOKENS", "2048"))
 VULN_AGENT_MAX_TOKENS: int = int(os.getenv("VULN_AGENT_MAX_TOKENS", "1024"))
 THREAT_AGENT_MAX_TOKENS: int = int(os.getenv("THREAT_AGENT_MAX_TOKENS", "1024"))
 LOG_AGENT_MAX_TOKENS: int = int(os.getenv("LOG_AGENT_MAX_TOKENS", "2048"))
-REPORT_AGENT_MAX_TOKENS: int = int(os.getenv("REPORT_AGENT_MAX_TOKENS", "2048"))
+REPORT_AGENT_MAX_TOKENS: int = int(os.getenv("REPORT_AGENT_MAX_TOKENS", "4096"))
 
 # ---------------------------------------------------------------------------
 # Cost Tracking (Phase 4)
