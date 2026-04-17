@@ -14,7 +14,9 @@
       "Bash(python main.py cve CVE-2024-38094)",
       "Bash(python -m pytest tests/test_orchestrator.py tests/test_live_llm.py -v --tb=short)",
       "Bash(python -m pytest tests/test_orchestrator.py -v --tb=short)",
-      "Bash(python -m pytest tests/test_report_agent.py tests/test_live_llm.py -v --tb=short)"
+      "Bash(python -m pytest tests/test_report_agent.py tests/test_live_llm.py -v --tb=short)",
+      "Bash(python -m pytest tests/test_log_analysis_agent.py -v --tb=short)",
+      "Bash(python -m pytest tests/ -q)"
     ]
   }
 }

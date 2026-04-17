@@ -80,6 +80,192 @@ _PRIV_ESC_PATTERNS = re.compile(
     re.IGNORECASE,
 )
 
+# ---------------------------------------------------------------------------
+# Security-relevant event pre-filter (reduces LLM token usage)
+# ---------------------------------------------------------------------------
+
+# Matches events that are worth sending to the LLM: failed logins, privilege
+# escalation, account changes, and process creation signals.
+_SECURITY_RELEVANT_EVENTS_RE = re.compile(
+    r"(?:"
+    r"failed\s+(?:password|login|auth(?:entication)?)"
+    r"|authentication\s+fail"
+    r"|invalid\s+(?:user|credentials?)"
+    r"|login\s+failed"
+    r"|access\s+denied"
+    r"|DENY"
+    r"|sudo|runas"
+    r"|privilege|escalat|elevated|impersonat"
+    r"|domain\s+admin"
+    r"|group\s+(?:change|modified|added)"
+    r"|added\s+to\s+\S*(?:admin|group)"
+    r"|useradd|adduser|net\s+user"
+    r"|account\s+(?:creat|modif|lock|disabl|chang)"
+    r"|password\s+(?:changed?|reset)"
+    r"|process\s+creat|new\s+process|execve"
+    r"|cmd\.exe|powershell"
+    r")",
+    re.IGNORECASE,
+)
+
+# ---------------------------------------------------------------------------
+# Windows Event Viewer text export parser
+# ---------------------------------------------------------------------------
+
+# Target Event IDs to extract from Windows Event Viewer .txt exports.
+_WINDOWS_SECURITY_EVENT_IDS: frozenset = frozenset(
+    {4624, 4625, 4648, 4672, 4688, 4720, 4732, 4740}
+)
+
+_WINDOWS_EVENT_DESCRIPTIONS: dict = {
+    4624: "An account was successfully logged on.",
+    4625: "An account failed to log on.",
+    4648: "A logon was attempted using explicit credentials.",
+    4672: "Special privileges assigned to new logon.",
+    4688: "A new process has been created.",
+    4720: "A user account was created.",
+    4732: "A member was added to a security-enabled local group.",
+    4740: "A user account was locked out.",
+}
+
+# Regexes for extracting fields embedded in Windows event description blocks.
+_ACCOUNT_NAME_RE = re.compile(r"Account Name:\s*(\S+)", re.IGNORECASE)
+_NETWORK_ADDR_RE = re.compile(r"Source Network Address:\s*(\S+)", re.IGNORECASE)
+
+
+def _parse_windows_block(block: list, target_ids: frozenset) -> "dict | None":
+    """Parse one Windows Event Viewer text block into a structured event dict.
+
+    Returns *None* when the block's Event ID is not in *target_ids*, so
+    callers can simply filter out ``None`` values.
+    """
+    fields: dict = {}
+    desc_lines: list = []
+    in_description = False
+
+    for line in block:
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if in_description:
+            desc_lines.append(stripped)
+            continue
+
+        lower = stripped.lower()
+        if lower.startswith("log name:"):
+            fields["log_name"] = stripped.split(":", 1)[1].strip()
+        elif lower.startswith("source:"):
+            fields["source"] = stripped.split(":", 1)[1].strip()
+        elif lower.startswith("date:"):
+            fields["date"] = stripped.split(":", 1)[1].strip()
+        elif lower.startswith("event id:"):
+            try:
+                fields["event_id"] = int(stripped.split(":", 1)[1].strip())
+            except ValueError:
+                pass
+        elif lower.startswith("task category:"):
+            fields["task_category"] = stripped.split(":", 1)[1].strip()
+        elif lower.startswith("level:"):
+            fields["level"] = stripped.split(":", 1)[1].strip()
+        elif lower.startswith("keywords:"):
+            fields["keywords"] = stripped.split(":", 1)[1].strip()
+        elif lower.startswith("user:"):
+            val = stripped.split(":", 1)[1].strip()
+            if val.upper() not in ("N/A", ""):
+                fields["user"] = val
+        elif lower.startswith("computer:"):
+            fields["computer"] = stripped.split(":", 1)[1].strip()
+        elif lower.startswith("description:"):
+            in_description = True
+            # Handle inline text: "Description: some text" on a single line
+            inline = stripped[len("description:"):].strip()
+            if inline:
+                desc_lines.append(inline)
+
+    event_id = fields.get("event_id")
+    if event_id not in target_ids:
+        return None
+
+    # Try to extract account name from description block when header User is N/A
+    user = fields.get("user")
+    if not user:
+        for desc_line in desc_lines:
+            m = _ACCOUNT_NAME_RE.search(desc_line)
+            if m:
+                val = m.group(1).strip()
+                if val.upper() not in ("-", "N/A", "SYSTEM", ""):
+                    user = val
+                    break
+
+    # Try to extract source IP from "Source Network Address:" in description
+    source_ip = None
+    for desc_line in desc_lines:
+        m = _NETWORK_ADDR_RE.search(desc_line)
+        if m:
+            addr = m.group(1).strip()
+            if addr and addr != "-" and not addr.startswith("::"):
+                source_ip = addr
+                break
+
+    # Map Keywords field to a compact action token
+    keywords = fields.get("keywords", "")
+    if "failure" in keywords.lower() or "fail" in keywords.lower():
+        action = "AUDIT_FAILURE"
+    elif "success" in keywords.lower():
+        action = "AUDIT_SUCCESS"
+    else:
+        action = keywords.upper().replace(" ", "_") if keywords else "UNKNOWN"
+
+    message = (
+        desc_lines[0]
+        if desc_lines
+        else _WINDOWS_EVENT_DESCRIPTIONS.get(event_id, f"Event ID {event_id}")
+    )
+
+    return {
+        "timestamp": fields.get("date"),
+        "source_ip": source_ip,
+        "destination_ip": None,
+        "action": action,
+        "user": user,
+        "event_id": event_id,
+        "computer": fields.get("computer"),
+        "log_name": fields.get("log_name"),
+        "keywords": keywords,
+        "message": message,
+        "raw": (
+            f"EventID={event_id} | {action} | user={user or 'N/A'}"
+            f" | computer={fields.get('computer', 'unknown')}"
+        ),
+    }
+
+
+def _do_parse_windows_event_log(lines: list) -> list:
+    """Split a Windows Event Viewer text export into per-event blocks and parse each.
+
+    Blocks are delimited by lines beginning with ``Log Name:``.  Only events
+    whose Event ID is in *_WINDOWS_SECURITY_EVENT_IDS* are returned; all
+    others are silently discarded.
+    """
+    blocks: list = []
+    current: list = []
+
+    for line in lines:
+        if re.match(r"^Log Name:\s+\S", line, re.IGNORECASE) and current:
+            blocks.append(current)
+            current = [line]
+        else:
+            current.append(line)
+    if current:
+        blocks.append(current)
+
+    events: list = []
+    for block in blocks:
+        evt = _parse_windows_block(block, _WINDOWS_SECURITY_EVENT_IDS)
+        if evt is not None:
+            events.append(evt)
+    return events
+
 
 class LogAnalysisAgent(BaseAgent):
     """Analyzes security logs for anomalies and maps findings to MITRE ATT&CK techniques."""
@@ -100,9 +286,20 @@ class LogAnalysisAgent(BaseAgent):
         def parse_lines(lines: list[str]) -> list[dict]:
             """Parse raw log lines into structured dicts.
 
-            Each dict has keys: timestamp, source_ip, destination_ip, action,
-            user, message, raw.
+            Automatically detects Windows Event Viewer text export format
+            (identified by a line beginning with ``Log Name:``) and routes to
+            the dedicated Windows parser.  All other input is handled
+            line-by-line via the structured and syslog regexes.
+
+            Each returned dict has keys: timestamp, source_ip,
+            destination_ip, action, user, message, raw.  Windows events
+            additionally carry event_id, computer, log_name, and keywords.
             """
+            # Detect Windows Event Viewer text export
+            for sample in lines[:50]:
+                if re.match(r"^Log Name:\s+\S", sample, re.IGNORECASE):
+                    return _do_parse_windows_event_log(lines)
+
             events: list[dict] = []
             for line in lines:
                 line = line.strip()
@@ -281,6 +478,58 @@ class LogAnalysisAgent(BaseAgent):
                 "event_types": event_types,
             }
 
+        @staticmethod
+        def parse_windows_event_log(lines: list[str]) -> list[dict]:
+            """Parse a Windows Event Viewer text export into structured event dicts.
+
+            Only returns events for the following Event IDs:
+              4624 — successful logon
+              4625 — failed logon
+              4648 — explicit-credential logon
+              4672 — special privileges assigned
+              4688 — new process created
+              4720 — user account created
+              4732 — member added to security group
+              4740 — account locked out
+
+            Output is structurally compatible with parse_lines() so all
+            downstream detectors and the LLM prompt builder work unchanged.
+            """
+            return _do_parse_windows_event_log(lines)
+
+        @staticmethod
+        def filter_security_events(events: list[dict], cap: int = 100) -> list[dict]:
+            """Return up to *cap* events that match security-relevant patterns.
+
+            Qualifies events containing signals for:
+            - Failed authentication (failed password, access denied, DENY, …)
+            - Privilege escalation (sudo, runas, elevated, …)
+            - Account changes (useradd, net user, account locked, …)
+            - Process creation (execve, cmd.exe, powershell, …)
+
+            Windows events (those with an ``event_id`` field set) always
+            qualify — they were already pre-screened to security-relevant
+            Event IDs by parse_windows_event_log().
+            """
+            filtered: list[dict] = []
+            for evt in events:
+                if len(filtered) >= cap:
+                    break
+                # Windows events are pre-screened by Event ID — always include
+                if evt.get("event_id"):
+                    filtered.append(evt)
+                    continue
+                combined = (
+                    (evt.get("message") or "")
+                    + " "
+                    + (evt.get("action") or "")
+                    + " "
+                    + (evt.get("raw") or "")
+                )
+                if _SECURITY_RELEVANT_EVENTS_RE.search(combined):
+                    filtered.append(evt)
+            return filtered
+
     # ------------------------------------------------------------------
     # Main entry point
     # ------------------------------------------------------------------
@@ -325,6 +574,14 @@ class LogAnalysisAgent(BaseAgent):
             "Parsed %d events (%d unique IPs).",
             stats["total_events"],
             stats["unique_ips"],
+        )
+
+        # ---- Pre-filter for LLM: keep only security-relevant events, cap at 100 ----
+        security_events = self.LogParser.filter_security_events(events, cap=100)
+        logger.info(
+            "Pre-filtered %d security-relevant events (of %d total) for LLM enrichment.",
+            len(security_events),
+            len(events),
         )
 
         # ---- Run rule-based detectors ----
@@ -381,7 +638,7 @@ class LogAnalysisAgent(BaseAgent):
             )
 
         # ---- LLM enrichment ----
-        llm_prompt = self._build_llm_prompt(findings, stats, events)
+        llm_prompt = self._build_llm_prompt(findings, stats, security_events)
         llm_response = await self._call_llm(
             llm_prompt,
             system_prompt=LOG_ANALYSIS_SYSTEM_PROMPT,
@@ -613,20 +870,24 @@ class LogAnalysisAgent(BaseAgent):
             elif "PRIVILEGE" in title.upper() or "PRIV_ESC" in title.upper():
                 priv_esc_events.append(pattern)
 
-        # Sample events (first 20) — strip overly large fields
+        # Security-relevant events — already filtered and capped at 100 upstream.
+        # Include Windows-specific fields when present.
         sample_events: list[dict] = []
         if events:
-            for evt in events[:20]:
-                sample_events.append(
-                    {
-                        "timestamp": evt.get("timestamp"),
-                        "source_ip": evt.get("source_ip"),
-                        "destination_ip": evt.get("destination_ip"),
-                        "action": evt.get("action"),
-                        "user": evt.get("user"),
-                        "message": (evt.get("message") or "")[:150],
-                    }
-                )
+            for evt in events:
+                entry: dict = {
+                    "timestamp": evt.get("timestamp"),
+                    "source_ip": evt.get("source_ip"),
+                    "destination_ip": evt.get("destination_ip"),
+                    "action": evt.get("action"),
+                    "user": evt.get("user"),
+                    "message": (evt.get("message") or "")[:150],
+                }
+                if evt.get("event_id"):
+                    entry["event_id"] = evt["event_id"]
+                if evt.get("computer"):
+                    entry["computer"] = evt["computer"]
+                sample_events.append(entry)
 
         finding_summaries: list[dict] = [
             {
@@ -646,7 +907,7 @@ class LogAnalysisAgent(BaseAgent):
             f"Time Range: {time_range}\n"
             f"Unique Source IPs: {unique_ips}\n\n"
             f"Detected Patterns:\n{json.dumps(detected_patterns, indent=2)}\n\n"
-            f"Sample Events (first 20):\n{json.dumps(sample_events, indent=2)}\n\n"
+            f"Security-relevant events ({len(sample_events)}):\n{json.dumps(sample_events, indent=2)}\n\n"
             f"Brute Force Candidates: {json.dumps(brute_force_events, indent=2)}\n"
             f"Privilege Escalation Candidates: {json.dumps(priv_esc_events, indent=2)}\n\n"
             f"Rule-based findings ({len(findings)} total):\n"

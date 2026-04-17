@@ -46,6 +46,67 @@ SAMPLE_SYSLOG_LINES = [
     "Oct 28 14:00:00 mailgw postfix[9001]: connect from unknown[192.168.1.200]",
 ]
 
+# ---------------------------------------------------------------------------
+# Windows Event Viewer text export sample data
+# ---------------------------------------------------------------------------
+
+_WINDOWS_EVT_4625 = """\
+Log Name:      Security
+Source:        Microsoft-Windows-Security-Auditing
+Date:          10/28/2024 2:13:45 AM
+Event ID:      4625
+Task Category: Logon
+Level:         Information
+Keywords:      Audit Failure
+User:          N/A
+Computer:      WIN-SERVER01
+Description:
+An account failed to log on.
+
+Account For Which Logon Failed:
+\tSecurity ID:\t\tS-1-0-0
+\tAccount Name:\t\tAdministrator
+\tAccount Domain:\t\tWIN-SERVER01
+
+Network Information:
+\tWorkstation Name:\tWIN-SERVER01
+\tSource Network Address:\t192.168.1.100
+\tSource Port:\t\t49234
+"""
+
+_WINDOWS_EVT_4688 = """\
+Log Name:      Security
+Source:        Microsoft-Windows-Security-Auditing
+Date:          10/28/2024 3:05:22 AM
+Event ID:      4688
+Task Category: Process Creation
+Level:         Information
+Keywords:      Audit Success
+User:          N/A
+Computer:      WIN-SERVER01
+Description:
+A new process has been created.
+
+Subject:
+\tSecurity ID:\t\tS-1-5-21-123456789-0
+\tAccount Name:\t\tjsmith
+\tAccount Domain:\t\tCORP
+"""
+
+_WINDOWS_EVT_4776 = """\
+Log Name:      Security
+Source:        Microsoft-Windows-Security-Auditing
+Date:          10/28/2024 3:10:00 AM
+Event ID:      4776
+Task Category: Credential Validation
+Level:         Information
+Keywords:      Audit Success
+User:          N/A
+Computer:      WIN-SERVER01
+Description:
+The computer attempted to validate the credentials for an account.
+"""
+
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -308,3 +369,116 @@ class TestAgentExecution:
         assert result.finding_count() >= 1
         assert result.raw_data is not None
         assert result.raw_data["total_lines"] == len(SAMPLE_LOG_LINES)
+
+
+# ---------------------------------------------------------------------------
+# Windows Event Viewer parser tests
+# ---------------------------------------------------------------------------
+
+
+class TestWindowsEventLogParser:
+    """Tests for LogParser.parse_windows_event_log() and format auto-detection."""
+
+    def test_parses_4625_correctly(self, parser):
+        """4625 (failed logon) → AUDIT_FAILURE, user and IP extracted from description."""
+        events = parser.parse_windows_event_log(_WINDOWS_EVT_4625.splitlines())
+        assert len(events) == 1
+        evt = events[0]
+        assert evt["event_id"] == 4625
+        assert evt["action"] == "AUDIT_FAILURE"
+        assert evt["computer"] == "WIN-SERVER01"
+        assert evt["user"] == "Administrator"
+        assert evt["source_ip"] == "192.168.1.100"
+        assert "account failed" in evt["message"].lower()
+
+    def test_parses_4688_correctly(self, parser):
+        """4688 (process creation) → AUDIT_SUCCESS, account name extracted from Subject."""
+        events = parser.parse_windows_event_log(_WINDOWS_EVT_4688.splitlines())
+        assert len(events) == 1
+        evt = events[0]
+        assert evt["event_id"] == 4688
+        assert evt["action"] == "AUDIT_SUCCESS"
+        assert evt["user"] == "jsmith"
+
+    def test_filters_non_target_event_id(self, parser):
+        """Event ID 4776 (not in the target set) must be discarded."""
+        events = parser.parse_windows_event_log(_WINDOWS_EVT_4776.splitlines())
+        assert len(events) == 0
+
+    def test_multiple_blocks_parsed_correctly(self, parser):
+        """Three-block export: 4625 + 4688 (kept), 4776 (filtered) → 2 events."""
+        combined = _WINDOWS_EVT_4625 + _WINDOWS_EVT_4688 + _WINDOWS_EVT_4776
+        events = parser.parse_windows_event_log(combined.splitlines())
+        assert len(events) == 2
+        assert {e["event_id"] for e in events} == {4625, 4688}
+
+    def test_parse_lines_detects_windows_format(self, parser):
+        """parse_lines() auto-routes Windows Event Viewer exports to the Windows parser."""
+        lines = _WINDOWS_EVT_4625.splitlines()
+        events = parser.parse_lines(lines)
+        assert len(events) == 1
+        assert events[0]["event_id"] == 4625
+
+    def test_required_keys_present(self, parser):
+        """Windows event dicts carry all standard keys plus Windows-specific keys."""
+        events = parser.parse_windows_event_log(_WINDOWS_EVT_4625.splitlines())
+        evt = events[0]
+        standard_keys = {"timestamp", "source_ip", "destination_ip", "action", "user", "message", "raw"}
+        windows_keys = {"event_id", "computer", "log_name", "keywords"}
+        assert standard_keys.issubset(evt.keys())
+        assert windows_keys.issubset(evt.keys())
+
+    def test_non_windows_format_unaffected(self, parser):
+        """Structured syslog lines do NOT trigger Windows parsing path."""
+        events = parser.parse_lines(SAMPLE_LOG_LINES)
+        # All SAMPLE_LOG_LINES are structured format — no event_id field expected
+        assert all("event_id" not in evt for evt in events)
+
+
+# ---------------------------------------------------------------------------
+# Security event pre-filter tests
+# ---------------------------------------------------------------------------
+
+
+class TestFilterSecurityEvents:
+    """Tests for LogParser.filter_security_events()."""
+
+    def test_failed_auth_events_kept(self, parser):
+        """All brute-force lines (DENY + 'authentication failure') qualify."""
+        events = parser.parse_lines(_BRUTE_FORCE_LINES)
+        filtered = parser.filter_security_events(events)
+        assert len(filtered) == len(_BRUTE_FORCE_LINES)
+
+    def test_benign_accept_event_excluded(self, parser):
+        """A plain ACCEPT event with no security keywords is excluded."""
+        benign = [
+            "2024-10-28T14:00:00Z 10.0.0.5 -> 10.0.0.6 ACCEPT user=jdoe transferred normal traffic"
+        ]
+        events = parser.parse_lines(benign)
+        filtered = parser.filter_security_events(events)
+        assert len(filtered) == 0
+
+    def test_cap_is_enforced(self, parser):
+        """filter_security_events returns at most *cap* events even when more qualify."""
+        many_lines = _BRUTE_FORCE_LINES * 10  # 150 security-relevant lines
+        events = parser.parse_lines(many_lines)
+        filtered = parser.filter_security_events(events, cap=7)
+        assert len(filtered) == 7
+
+    def test_windows_events_always_qualify(self, parser):
+        """Windows events bypass the regex filter because event_id is set."""
+        # 4688 is process creation — its message doesn't contain "failed" keywords
+        # but it must still qualify because it's a pre-screened Windows event.
+        events = parser.parse_windows_event_log(_WINDOWS_EVT_4688.splitlines())
+        assert len(events) == 1
+        filtered = parser.filter_security_events(events)
+        assert len(filtered) == 1
+
+    def test_privilege_escalation_keyword_kept(self, parser):
+        """Lines containing 'sudo' are captured by the security filter."""
+        priv_line = [
+            "2024-10-28T02:00:00Z 10.0.0.1 -> 10.0.0.2 EXEC user=jdoe sudo bash"
+        ]
+        events = parser.parse_lines(priv_line)
+        filtered = parser.filter_security_events(events)
+        assert len(filtered) == 1
